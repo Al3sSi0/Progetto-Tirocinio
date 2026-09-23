@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, FileText, FileCode, File, AlignLeft, Download } from 'lucide-react';
 import { C, font, serif } from '../../styles/theme';
 import { exportMoodleXml, exportWord, exportPdf, exportAiken } from '../../lib/exportTest';
+import Spinner from '../common/Spinner';
 
 const FORMATS = [
   {
@@ -69,8 +70,8 @@ export default function ExportTestModal({ test, onClose }) {
     <>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <div
-        style={{ position: 'fixed', inset: 0, background: 'rgba(28,43,29,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 110 }}
-        onClick={onClose}
+        style={{ position: 'fixed', inset: 0, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 110 }}
+        onClick={() => { if (!exporting) onClose(); }}
       >
         <div
           style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '28px 32px', maxWidth: 480, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.14)', fontFamily: font }}
@@ -88,7 +89,8 @@ export default function ExportTestModal({ test, onClose }) {
             </div>
             <button
               onClick={onClose}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textFaint, padding: 4, borderRadius: 4, display: 'flex', flexShrink: 0, marginLeft: 12 }}
+              disabled={!!exporting}
+              style={{ background: 'none', border: 'none', cursor: exporting ? 'not-allowed' : 'pointer', color: C.textFaint, padding: 4, borderRadius: 4, display: 'flex', flexShrink: 0, marginLeft: 12, opacity: exporting ? 0.4 : 1 }}
             >
               <X size={18} />
             </button>
@@ -141,7 +143,7 @@ export default function ExportTestModal({ test, onClose }) {
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                     <div style={{ width: 34, height: 34, borderRadius: 8, background: format.color + '1A', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {isExporting
-                        ? <span style={{ display: 'inline-block', width: 14, height: 14, border: `2px solid ${format.color}44`, borderTopColor: format.color, borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+                        ? <Spinner size={14} color={format.color} trackColor={format.color + '44'} />
                         : <Icon size={16} color={format.color} />
                       }
                     </div>

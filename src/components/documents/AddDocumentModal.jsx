@@ -5,6 +5,7 @@ import { extractText } from '../../lib/extractText';
 import { C, font, serif } from '../../styles/theme';
 import SuggestInput from '../dashboard/SuggestInput';
 import { useAllSuggestions } from '../../lib/useAllSuggestions';
+import Spinner from '../common/Spinner';
 
 const initialForm = { title: '', subject: '', topic: '', file: null };
 
@@ -93,7 +94,7 @@ export default function AddDocumentModal({ onClose, onSaved, data }) {
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(28,43,29,0.40)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+      style={{ position: 'fixed', inset: 0, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
       onClick={() => { if (!isBusy) onClose(); }}
     >
       <div
@@ -119,7 +120,7 @@ export default function AddDocumentModal({ onClose, onSaved, data }) {
               onChange={e => setField('title', e.target.value)}
               placeholder="Es. Lezione 3 — Integrali"
               style={{ width: '100%', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', fontSize: 13, color: C.text, fontFamily: font, outline: 'none', boxSizing: 'border-box' }}
-              onFocus={e => e.target.style.borderColor = '#5C7A5E'}
+              onFocus={e => e.target.style.borderColor = C.focusBorder}
               onBlur={e => e.target.style.borderColor = C.border}
             />
           </div>
@@ -151,7 +152,7 @@ export default function AddDocumentModal({ onClose, onSaved, data }) {
                 {/* Stato estrazione */}
                 {extractStatus && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textMuted }}>
-                    <span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid #B8AD9A', borderTopColor: C.green, borderRadius: '50%', animation: 'spin 0.7s linear infinite', flexShrink: 0 }} />
+                    <Spinner size={10} color={C.green} trackColor={C.dot} />
                     {extractStatus}
                   </div>
                 )}
@@ -202,7 +203,7 @@ export default function AddDocumentModal({ onClose, onSaved, data }) {
           </div>
 
           {warning && (
-            <div style={{ background: '#FBF2DC', border: '1px solid #D4B84A', color: '#7A5010', fontSize: 13, borderRadius: 8, padding: '10px 14px' }}>
+            <div style={{ background: C.warning.bg, border: `1px solid ${C.warning.border}`, color: C.warning.text, fontSize: 13, borderRadius: 8, padding: '10px 14px' }}>
               {warning} Premi nuovamente "Salva" per confermare.
             </div>
           )}
@@ -221,7 +222,7 @@ export default function AddDocumentModal({ onClose, onSaved, data }) {
           </button>
           <button onClick={handleSubmit} disabled={isBusy}
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.green, border: 'none', borderRadius: 8, cursor: isBusy ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: isBusy ? 0.8 : 1 }}>
-            {(saving || extractStatus) && <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />}
+            {(saving || extractStatus) && <Spinner size={12} color="#FFF" trackColor="rgba(255,255,255,0.4)" />}
             {saving ? 'Salvataggio…' : extractStatus ? 'Attendere…' : 'Salva'}
           </button>
         </div>

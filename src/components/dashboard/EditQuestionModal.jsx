@@ -4,6 +4,9 @@ import pb from '../../lib/pocketbase';
 import { C, font, serif, BLOOM_LEVELS, BLOOM_LABELS } from '../../styles/theme';
 import SuggestInput from './SuggestInput';
 import { useAllSuggestions } from '../../lib/useAllSuggestions';
+import Spinner from '../common/Spinner';
+import BloomPicker from '../common/BloomPicker';
+import ChipSelect from '../common/ChipSelect';
 
 function parseOptions(raw) {
   if (Array.isArray(raw)) return raw.length ? raw : [''];
@@ -14,21 +17,21 @@ function parseOptions(raw) {
 }
 
 export default function EditQuestionModal({ question, onClose, onSaved, data }) {
+  const initialOptions = parseOptions(question.options);
   const [form, setForm] = useState({
     subject:        question.subject || '',
     topic:          question.topic || '',
     content:        question.content || '',
-    options:        parseOptions(question.options),
-    correct_answer: question.correct_answer || '',
+    options:        initialOptions,
     bloom_level:    question.bloom_level || '',
   });
+  const initialCorrectIdx = initialOptions.findIndex(o => o === question.correct_answer);
+  const [correctIdx, setCorrectIdx] = useState(initialCorrectIdx >= 0 ? initialCorrectIdx : null);
   const [saving, setSaving]       = useState(false);
   const [formError, setFormError] = useState('');
   const [warning, setWarning]     = useState('');
 
   const { subjects: subjectSuggestions, topics: topicSuggestions } = useAllSuggestions(form.subject, data);
-
-  const validOptions = form.options.filter(o => o.trim() !== '');
 
   function setField(key, val) { setForm(f => ({ ...f, [key]: val })); setFormError(''); setWarning(''); }
   function setOption(idx, val) {
@@ -38,6 +41,12 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
   function addOption() { setForm(f => ({ ...f, options: [...f.options, ''] })); }
   function removeOption(idx) {
     setForm(f => { const options = f.options.filter((_, i) => i !== idx); return { ...f, options: options.length ? options : [''] }; });
+    setCorrectIdx(prev => {
+      if (prev === null) return prev;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
   }
 
   async function handleSubmit() {
@@ -45,11 +54,12 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
     const topic   = form.topic.trim();
     const content = form.content.trim();
     const opts    = form.options.filter(o => o.trim() !== '');
+    const correct_answer = (correctIdx !== null ? (form.options[correctIdx] || '') : '').trim();
 
     if (!content) { setFormError('Il testo della domanda è obbligatorio.'); setWarning(''); return; }
     if (opts.length === 0) { setFormError("Aggiungi almeno un'opzione di risposta."); setWarning(''); return; }
-    if (!form.correct_answer || !opts.includes(form.correct_answer)) {
-      setFormError('Seleziona una risposta corretta tra le opzioni.'); setWarning(''); return;
+    if (!correct_answer || !opts.includes(correct_answer)) {
+      setFormError('Seleziona la risposta corretta tra le opzioni.'); setWarning(''); return;
     }
     if (!subject && topic) { setFormError('Inserisci la materia prima di specificare un argomento.'); setWarning(''); return; }
 
@@ -67,7 +77,7 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
         topic,
         content,
         options:        opts,
-        correct_answer: form.correct_answer,
+        correct_answer,
         bloom_level:    form.bloom_level,
       });
       onSaved();
@@ -82,7 +92,7 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(28,43,29,0.40)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+      style={{ position: 'fixed', inset: 0, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
       onClick={() => { if (!saving) onClose(); }}
     >
       <div
@@ -110,10 +120,19 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
           </div>
 
           <div>
-            <label style={labelStyle}>Opzioni di risposta *</label>
+            <label style={labelStyle}>Opzioni di risposta * <span style={{ fontWeight: 400, color: C.textFaint }}>— seleziona il pallino per indicare quella corretta</span></label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {form.options.map((opt, idx) => (
-                <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="radio"
+                    name="edit-question-correct-answer"
+                    checked={correctIdx === idx}
+                    onChange={() => setCorrectIdx(idx)}
+                    disabled={!opt.trim()}
+                    title="Segna come risposta corretta"
+                    style={{ width: 15, height: 15, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
+                  />
                   <input value={opt} onChange={e => setOption(idx, e.target.value)} placeholder={`Opzione ${idx + 1}`} style={{ ...inputStyle, flex: 1 }} />
                   <button onClick={() => removeOption(idx)}
                     style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, flexShrink: 0 }}
@@ -130,23 +149,12 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
           </div>
 
           <div>
-            <label style={labelStyle}>Risposta corretta *</label>
-            <select value={form.correct_answer} onChange={e => setField('correct_answer', e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-              <option value="">— seleziona —</option>
-              {validOptions.map((o, i) => <option key={i} value={o}>{o}</option>)}
-            </select>
-          </div>
-
-          <div>
             <label style={labelStyle}>Livello Bloom</label>
-            <select value={form.bloom_level} onChange={e => setField('bloom_level', e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-              <option value="">— nessuno —</option>
-              {BLOOM_LEVELS.map(l => <option key={l} value={l}>{BLOOM_LABELS[l]}</option>)}
-            </select>
+            <BloomPicker value={form.bloom_level} onChange={v => setField('bloom_level', v)} />
           </div>
 
           {warning && (
-            <div style={{ background: '#FBF2DC', border: '1px solid #D4B84A', color: '#7A5010', fontSize: 13, borderRadius: 8, padding: '10px 14px' }}>
+            <div style={{ background: C.warning.bg, border: `1px solid ${C.warning.border}`, color: C.warning.text, fontSize: 13, borderRadius: 8, padding: '10px 14px' }}>
               {warning} Premi nuovamente "Salva modifiche" per confermare.
             </div>
           )}
@@ -165,7 +173,7 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
           </button>
           <button onClick={handleSubmit} disabled={saving}
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.green, border: 'none', borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: saving ? 0.8 : 1 }}>
-            {saving && <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />}
+            {saving && <Spinner size={12} color="#FFF" trackColor="rgba(255,255,255,0.4)" />}
             {saving ? 'Salvataggio…' : 'Salva modifiche'}
           </button>
         </div>

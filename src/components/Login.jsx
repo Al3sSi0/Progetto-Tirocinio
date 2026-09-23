@@ -147,6 +147,7 @@ export default function Login() {
     setLoading(true);
     try {
       await pb.collection('users').authWithPassword(email, password);
+      try { sessionStorage.setItem('showWelcome', '1'); } catch { /* ignore */ }
       navigate('/');
     } catch {
       setError('Credenziali non valide. Riprova.');

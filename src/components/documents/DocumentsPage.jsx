@@ -1,11 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, FileText, ClipboardList, LogOut, Search, ChevronRight, Trash2, Plus, MoreVertical, Pencil, HelpCircle } from 'lucide-react';
+import { BookOpen, FileText, ClipboardList, LogOut, Search, ChevronRight, Trash2, Plus, MoreVertical, Pencil, HelpCircle, FolderOpen } from 'lucide-react';
 import pb from '../../lib/pocketbase';
 import { C, font, serif } from '../../styles/theme';
 import AddDocumentModal from './AddDocumentModal';
 import EditDocumentModal from './EditDocumentModal';
-import InfoModal from '../InfoModal';
+import Navbar from '../common/Navbar';
+import Spinner from '../common/Spinner';
+import EmptyState from '../common/EmptyState';
+import ConfirmModal from '../common/ConfirmModal';
 
 // ── Helper stile th ───────────────────────────────────────────────────────────
 
@@ -31,10 +34,9 @@ function thStyle(width) {
 function TypeBadge({ ext }) {
   const e = (ext || '').toLowerCase();
   let bg, color;
-  if (e === 'pdf')                   { bg = '#FAE8E8'; color = '#8A1A1A'; }
-  else if (e === 'txt')              { bg = C.headerBg; color = C.textMuted; }
-  else if (e === 'doc' || e === 'docx') { bg = '#E6EEF6'; color = '#2A5C8A'; }
-  else                               { bg = C.headerBg; color = C.textMuted; }
+  if (e === 'pdf')                      { ({ bg, color } = C.fileTypes.pdf); }
+  else if (e === 'doc' || e === 'docx') { ({ bg, color } = C.fileTypes.doc); }
+  else                                  { bg = C.headerBg; color = C.textMuted; }
 
   return (
     <span style={{ background: bg, color, display: 'inline-block', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 500, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
@@ -60,11 +62,9 @@ export default function DocumentsPage() {
   const [showAddModal, setShowAddModal]         = useState(false);
   const [editDoc, setEditDoc]                   = useState(null);
   const [openMenuId, setOpenMenuId]             = useState(null);
-  const [showInfo, setShowInfo]                 = useState(false);
 
   const navigate = useNavigate();
   const location = useLocation();
-  const user = pb.authStore.model;
 
   async function loadDocuments() {
     setLoading(true); setError('');
@@ -104,6 +104,12 @@ export default function DocumentsPage() {
   }
 
   useEffect(() => { loadDocuments(); }, []);
+  useEffect(() => {
+    if (location.state?.openUpload) {
+      setShowAddModal(true);
+      window.history.replaceState({}, '');
+    }
+  }, []);
   useEffect(() => {
     function closeMenu() { setOpenMenuId(null); }
     document.addEventListener('mousedown', closeMenu);
@@ -146,7 +152,6 @@ export default function DocumentsPage() {
   function toggleTopic(key) {
     setExpandedTopics(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
   }
-  function handleLogout() { pb.authStore.clear(); navigate('/login'); }
 
   // ── Render ──
   return (
@@ -155,84 +160,13 @@ export default function DocumentsPage() {
         @import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap');
         @keyframes spin { to { transform: rotate(360deg); } }
         .tbl-row { cursor: pointer; transition: background 0.1s; }
-        .tbl-row:hover > td { background: #EDE8DC !important; }
-        .tbl-row-d:hover > td { background: #EDE8DC !important; }
+        .tbl-row:hover > td { background: ${C.treeLevels[3]} !important; }
+        .tbl-row-d:hover > td { background: ${C.treeLevels[3]} !important; }
       `}</style>
 
       <div style={{ minHeight: '100vh', background: C.bg, fontFamily: font }}>
 
-        {/* ── Topbar ── */}
-        <header style={{ position: 'sticky', top: 0, zIndex: 10, background: C.surface, borderBottom: `1px solid ${C.border}`, height: 56, padding: '0 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 30, height: 30, background: C.green, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <BookOpen size={14} color="#A8C5A0" />
-            </div>
-            <span style={{ fontFamily: serif, fontSize: 16, color: C.text, fontWeight: 500 }}>Portale Docenti</span>
-          </div>
-
-          {/* Nav tabs */}
-          <nav style={{ display: 'flex', gap: 4 }}>
-            <button
-              onClick={() => navigate('/')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 12px',
-                background: location.pathname === '/' ? C.green : 'transparent',
-                color: location.pathname === '/' ? '#FFF' : C.textMuted,
-                border: location.pathname === '/' ? 'none' : `1px solid ${C.border}`,
-                borderRadius: 6, cursor: 'pointer', fontFamily: font, fontSize: 12, fontWeight: 500,
-              }}
-            >
-              <BookOpen size={13} /> Domande
-            </button>
-            <button
-              onClick={() => navigate('/documents')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 12px',
-                background: location.pathname === '/documents' ? C.green : 'transparent',
-                color: location.pathname === '/documents' ? '#FFF' : C.textMuted,
-                border: location.pathname === '/documents' ? 'none' : `1px solid ${C.border}`,
-                borderRadius: 6, cursor: 'pointer', fontFamily: font, fontSize: 12, fontWeight: 500,
-              }}
-            >
-              <FileText size={13} /> Documenti
-            </button>
-            <button
-              onClick={() => navigate('/tests')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 12px',
-                background: location.pathname === '/tests' ? C.green : 'transparent',
-                color: location.pathname === '/tests' ? '#FFF' : C.textMuted,
-                border: location.pathname === '/tests' ? 'none' : `1px solid ${C.border}`,
-                borderRadius: 6, cursor: 'pointer', fontFamily: font, fontSize: 12, fontWeight: 500,
-              }}
-            >
-              <ClipboardList size={13} /> Test
-            </button>
-          </nav>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button
-              onClick={() => setShowInfo(true)}
-              style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 6, color: C.textMuted, cursor: 'pointer', padding: '6px 10px', display: 'flex', alignItems: 'center' }}
-              onMouseEnter={e => e.currentTarget.style.color = C.text}
-              onMouseLeave={e => e.currentTarget.style.color = C.textMuted}
-              title="Guida"
-            >
-              <HelpCircle size={14} />
-            </button>
-            <span style={{ fontSize: 12, color: C.textMuted }}>{user?.email}</span>
-            <button onClick={handleLogout}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textMuted, background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontFamily: font }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = '#B05A3A'; e.currentTarget.style.color = '#B05A3A'; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textMuted; }}
-            >
-              <LogOut size={13} /> Logout
-            </button>
-          </div>
-        </header>
+        <Navbar />
 
         {/* ── Main ── */}
         <main style={{ padding: '2rem 1.5rem', maxWidth: 1200, margin: '0 auto' }}>
@@ -298,20 +232,25 @@ export default function DocumentsPage() {
                   {loading ? (
                     <tr>
                       <td colSpan={3} style={{ padding: '3rem', textAlign: 'center', color: C.textFaint }}>
-                        <span style={{ display: 'inline-block', width: 16, height: 16, border: `2px solid ${C.border}`, borderTopColor: '#5C7A5E', borderRadius: '50%', animation: 'spin 0.7s linear infinite', marginRight: 8, verticalAlign: 'middle' }} />
+                        <Spinner size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
                         Caricamento…
                       </td>
                     </tr>
                   ) : groupedData.length === 0 ? (
                     <tr>
-                      <td colSpan={3} style={{ padding: '3rem', textAlign: 'center', color: C.textFaint, fontSize: 13 }}>
-                        Nessun documento trovato.
+                      <td colSpan={3}>
+                        <EmptyState
+                          icon={FolderOpen}
+                          message={globalFilter ? `Nessun risultato per «${globalFilter}».` : 'Nessun documento ancora.'}
+                          actionLabel={!globalFilter ? '+ Aggiungi documento' : undefined}
+                          onAction={() => setShowAddModal(true)}
+                        />
                       </td>
                     </tr>
                   ) : (
                     groupedData.flatMap(({ subject, topics }, gi) => {
                       const isSubjectExpanded = expandedSubjects.has(subject);
-                      const groupBg = gi % 2 === 0 ? 'transparent' : '#FAF7F2';
+                      const groupBg = gi % 2 === 0 ? 'transparent' : C.treeLevels[0];
 
                       const allSubjectDocs = topics.flatMap(t => t.docs);
                       const selectedInSubject = allSubjectDocs.filter(d => selectedIds.has(d.id)).length;
@@ -348,7 +287,7 @@ export default function DocumentsPage() {
                       const topicRows = topics.flatMap(({ topic, docs }) => {
                         const topicKey = `${subject}::${topic}`;
                         const isTopicExpanded = expandedTopics.has(topicKey);
-                        const topicBg = '#F5F2EB';
+                        const topicBg = C.treeLevels[1];
                         const selectedInTopic = docs.filter(d => selectedIds.has(d.id)).length;
 
                         const topicRow = (
@@ -381,7 +320,7 @@ export default function DocumentsPage() {
 
                         // ── Livello 3: righe documento ──
                         const docRows = docs.map(doc => {
-                          const docBg = '#F3EFE8';
+                          const docBg = C.treeLevels[2];
                           const ext = doc.file?.split('.').pop()?.toLowerCase() ?? '';
                           const fileUrl = pb.files.getURL(doc, doc.file);
                           const displayName = doc.title || doc.file || '—';
@@ -485,37 +424,17 @@ export default function DocumentsPage() {
       )}
 
       {/* ── Modale di conferma eliminazione ── */}
-      {showInfo && <InfoModal onClose={() => setShowInfo(false)} />}
 
       {showDeleteModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(28,43,29,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
-          onClick={() => { if (!deleting) setShowDeleteModal(false); }}
-        >
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '28px 32px', maxWidth: 420, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.12)', fontFamily: font }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-              <div style={{ width: 36, height: 36, background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Trash2 size={16} color={C.error.text} />
-              </div>
-              <h2 style={{ fontFamily: serif, fontSize: 17, fontWeight: 500, color: C.text, margin: 0 }}>Elimina documenti</h2>
-            </div>
-            <p style={{ fontSize: 14, color: C.textBody, lineHeight: 1.6, margin: '0 0 24px' }}>
-              Stai per eliminare <strong>{selectedIds.size} {selectedIds.size === 1 ? 'documento' : 'documenti'}</strong>. Questa azione è irreversibile.
-            </p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowDeleteModal(false)} disabled={deleting}
-                style={{ padding: '8px 18px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: deleting ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, opacity: deleting ? 0.5 : 1 }}>
-                Annulla
-              </button>
-              <button onClick={deleteSelected} disabled={deleting}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.error.text, border: 'none', borderRadius: 8, cursor: deleting ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: deleting ? 0.8 : 1 }}>
-                {deleting && <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />}
-                {deleting ? 'Eliminazione…' : 'Elimina'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmModal
+          icon={Trash2}
+          title="Elimina documenti"
+          message={<>Stai per eliminare <strong>{selectedIds.size} {selectedIds.size === 1 ? 'documento' : 'documenti'}</strong>. Questa azione è irreversibile.</>}
+          confirmLabel="Elimina"
+          loading={deleting}
+          onConfirm={deleteSelected}
+          onCancel={() => setShowDeleteModal(false)}
+        />
       )}
     </>
   );

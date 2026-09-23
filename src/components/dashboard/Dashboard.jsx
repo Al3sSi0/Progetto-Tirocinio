@@ -1,118 +1,178 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, FileText, ClipboardList, LogOut, Search, ChevronRight, Trash2, Plus, MoreVertical, Pencil, Tag, ClipboardCheck, HelpCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Trash2, Plus, Pencil, Tag, ClipboardCheck, Inbox, Check, Layers } from 'lucide-react';
 import pb from '../../lib/pocketbase';
 import { classifyBloomCouncil } from '../../lib/classifyBloom';
-import { C, BLOOM_STYLES, font, serif } from '../../styles/theme';
+import { C, BLOOM_STYLES, BLOOM_LEVELS, BLOOM_LABELS, font, serif, colorForTag } from '../../styles/theme';
 import AddQuestionModal from './AddQuestionModal';
 import EditQuestionModal from './EditQuestionModal';
-import InfoModal from '../InfoModal';
+import Navbar from '../common/Navbar';
+import Spinner from '../common/Spinner';
+import EmptyState from '../common/EmptyState';
+import ConfirmModal from '../common/ConfirmModal';
 
-// ── Helper stile th ───────────────────────────────────────────────────────────
-
-function thStyle(width) {
-  return {
-    padding: '10px 14px',
-    textAlign: 'left',
-    fontSize: 10.5,
-    fontWeight: 500,
-    color: C.textMuted,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
-    borderBottom: `1px solid ${C.border}`,
-    background: C.headerBg,
-    whiteSpace: 'nowrap',
-    userSelect: 'none',
-    ...(width ? { width } : {}),
-  };
+function parseOptions(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw) { try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw]; } catch { return [raw]; } }
+  return [];
 }
 
-// ── Sub-componenti tabella ────────────────────────────────────────────────────
-
-function BloomBadge({ level }) {
-  const s = BLOOM_STYLES[level?.toLowerCase()] ?? { background: '#EDEAE3', color: '#5A5040' };
+// ── Indicatore livello Bloom: 6 pallini + etichetta in italiano ────────────────
+function BloomTag({ level }) {
+  const idx = BLOOM_LEVELS.indexOf((level || '').toLowerCase());
+  const style = idx >= 0 ? BLOOM_STYLES[BLOOM_LEVELS[idx]] : null;
   return (
-    <span style={{ ...s, display: 'inline-block', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 500, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>
-      {level || '—'}
-    </span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 3 }} title="Livello di ragionamento richiesto (Tassonomia di Bloom)">
+        {BLOOM_LEVELS.map((_, i) => (
+          <span key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: idx >= 0 && i <= idx ? style.color : C.borderLight, flexShrink: 0 }} />
+        ))}
+      </div>
+      {idx >= 0
+        ? <span style={{ fontSize: 12.5, fontWeight: 600, color: style.color }}>{BLOOM_LABELS[BLOOM_LEVELS[idx]]}</span>
+        : <span style={{ fontSize: 12.5, fontStyle: 'italic', color: C.textFaint }}>Non classificato</span>
+      }
+    </div>
   );
 }
 
-function JsonItems({ value }) {
-  let items = [];
-  if (Array.isArray(value)) items = value;
-  else if (typeof value === 'object' && value !== null) items = Object.values(value);
-  else if (typeof value === 'string' && value) {
-    try { items = JSON.parse(value); } catch { items = [value]; }
-  }
-  if (!items.length) return <span style={{ color: C.dot, fontStyle: 'italic', fontSize: 13 }}>—</span>;
+// ── Controllo di selezione (al posto della checkbox nativa) ────────────────────
+function SelectDot({ selected, onToggle }) {
   return (
-    <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
-      {items.map((item, i) => (
-        <li key={i} style={{ display: 'flex', gap: 8, fontSize: 13, color: C.textBody, lineHeight: 1.5 }}>
-          <span style={{ color: C.dot, flexShrink: 0, marginTop: 1 }}>·</span>
-          <span>{String(item)}</span>
-        </li>
-      ))}
-    </ul>
+    <button
+      onClick={onToggle}
+      title={selected ? 'Deseleziona' : 'Seleziona'}
+      style={{
+        width: 26, height: 26, borderRadius: '50%', flexShrink: 0, cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: selected ? C.green : 'transparent',
+        border: `2px solid ${selected ? C.green : C.border}`,
+        transition: 'background 0.12s, border-color 0.12s',
+      }}
+    >
+      {selected && <Check size={14} color="#FFF" strokeWidth={3} />}
+    </button>
   );
 }
 
-function QuestionDetail({ question }) {
+function ActionBtn({ icon: Icon, label, onClick, disabled, danger }) {
   return (
-    <tr>
-      <td colSpan={3} style={{ background: C.expandBg, borderBottom: `1px solid ${C.border}`, padding: 0 }}>
-        <div style={{ padding: '20px 24px 20px 72px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 24 }}>
-          <div>
-            <p style={{ fontSize: 10, fontWeight: 500, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, marginTop: 0 }}>
-              Testo completo
-            </p>
-            <p style={{ fontSize: 14, color: C.text, lineHeight: 1.7, margin: 0 }}>
-              {question.content || '—'}
-            </p>
-          </div>
-          <div>
-            <p style={{ fontSize: 10, fontWeight: 500, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, marginTop: 0 }}>
-              Opzioni
-            </p>
-            <JsonItems value={question.options} />
-          </div>
-          <div>
-            <p style={{ fontSize: 10, fontWeight: 500, color: C.textFaint, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, marginTop: 0 }}>
-              Risposta corretta
-            </p>
-            <p style={{ fontSize: 13, color: C.textBody, lineHeight: 1.5, margin: 0 }}>
-              {question.correct_answer || <span style={{ color: C.dot, fontStyle: 'italic' }}>—</span>}
-            </p>
-          </div>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8,
+        background: 'transparent', border: `1px solid ${danger ? C.error.border : C.border}`,
+        color: danger ? C.error.text : C.textBody, fontFamily: font, fontSize: 12.5, fontWeight: 500,
+        cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1,
+      }}
+      onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = danger ? C.error.bg : C.expandBg; }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+    >
+      <Icon size={13} /> {label}
+    </button>
+  );
+}
+
+function QuestionCard({ q, selected, onToggle, onEdit, onDelete, onClassify, classifying, classifyDisabled }) {
+  const options = parseOptions(q.options);
+  const subject = (q.subject || '').trim();
+  const topic = (q.topic || '').trim();
+  const subjColor = subject ? colorForTag(subject) : null;
+
+  return (
+    <div style={{
+      background: C.surface, borderRadius: 14, padding: '18px 20px 16px',
+      border: `1px solid ${selected ? C.green : C.border}`,
+      boxShadow: selected ? `0 0 0 3px ${C.expandBg}` : 'none',
+      transition: 'border-color 0.15s, box-shadow 0.15s',
+      display: 'flex', flexDirection: 'column', gap: 12,
+    }}>
+      {/* Riga superiore: materia/argomento + selezione */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: 18, rowGap: 6 }}>
+          {subject && (
+            <div>
+              <div style={{ fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.textFaint, marginBottom: 3 }}>Materia</div>
+              <span style={{ background: subjColor.bg, color: subjColor.color, padding: '2px 10px', borderRadius: 20, fontSize: 12.5, fontWeight: 600 }}>{subject}</span>
+            </div>
+          )}
+          {topic && (
+            <div>
+              <div style={{ fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.textFaint, marginBottom: 3 }}>Argomento</div>
+              <span style={{ fontSize: 13, color: C.textBody, fontWeight: 500 }}>{topic}</span>
+            </div>
+          )}
         </div>
-      </td>
-    </tr>
+        <SelectDot selected={selected} onToggle={onToggle} />
+      </div>
+
+      {/* Testo della domanda */}
+      <div style={{ fontFamily: serif, fontSize: 16.5, color: C.text, lineHeight: 1.5, fontWeight: 500 }}>
+        {q.content || '—'}
+      </div>
+
+      {/* Opzioni */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+        {options.map((opt, i) => {
+          const correct = opt === q.correct_answer;
+          return (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 10, fontSize: 13.5,
+              background: correct ? 'rgba(168,197,160,0.25)' : C.expandBg,
+              border: `1px solid ${correct ? C.greenAccent : C.borderLight}`,
+              color: correct ? C.green : C.textBody, fontWeight: correct ? 600 : 400,
+            }}>
+              <span style={{
+                width: 22, height: 22, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 11.5, fontWeight: 600, background: correct ? C.green : C.borderLight, color: correct ? '#FFF' : C.textMuted,
+              }}>
+                {correct ? <Check size={13} /> : String.fromCharCode(65 + i)}
+              </span>
+              <span>{opt}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer: bloom + azioni */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, paddingTop: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {classifying ? <><Spinner size={13} /><span style={{ fontSize: 12.5, color: C.textFaint }}>Classificazione…</span></> : <BloomTag level={q.bloom_level} />}
+          {!q.bloom_level && !classifying && (
+            <button
+              onClick={onClassify}
+              disabled={classifyDisabled}
+              style={{ background: 'none', border: 'none', color: C.greenLight, fontFamily: font, fontSize: 12.5, fontWeight: 500, cursor: classifyDisabled ? 'not-allowed' : 'pointer', textDecoration: 'underline', opacity: classifyDisabled ? 0.45 : 1 }}
+            >
+              Classifica con l'AI
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ActionBtn icon={Pencil} label="Modifica" onClick={onEdit} />
+          {q.bloom_level && <ActionBtn icon={Tag} label="Riclassifica" onClick={onClassify} disabled={classifyDisabled || classifying} />}
+          <ActionBtn icon={Trash2} label="Elimina" onClick={onDelete} danger />
+        </div>
+      </div>
+    </div>
   );
 }
-
-
-// ── Componente principale ─────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const [data, setData]                           = useState([]);
-  const [loading, setLoading]                     = useState(true);
-  const [error, setError]                         = useState('');
-  const [globalFilter, setGlobalFilter]           = useState('');
-  const [expandedSubjects,  setExpandedSubjects]  = useState(new Set());
-  const [expandedTopics,    setExpandedTopics]    = useState(new Set());
-  const [expandedQuestions, setExpandedQuestions] = useState(new Set());
-  const [selectedIds,       setSelectedIds]       = useState(new Set());
-  const [showDeleteModal, setShowDeleteModal]     = useState(false);
-  const [deleting, setDeleting]                   = useState(false);
-  const [showAddModal, setShowAddModal]           = useState(false);
-  const [openMenuId, setOpenMenuId]               = useState(null);
-  const [editQuestion, setEditQuestion]           = useState(null);
-  const [classifyingId, setClassifyingId]         = useState(null);
-  const [showInfo, setShowInfo]                   = useState(false);
+  const [data, setData]                     = useState([]);
+  const [loading, setLoading]               = useState(true);
+  const [error, setError]                   = useState('');
+  const [globalFilter, setGlobalFilter]     = useState('');
+  const [subjectFilter, setSubjectFilter]   = useState('');
+  const [topicFilter, setTopicFilter]       = useState('');
+  const [selectedIds, setSelectedIds]       = useState(new Set());
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting]             = useState(false);
+  const [showAddModal, setShowAddModal]     = useState(false);
+  const [editQuestion, setEditQuestion]     = useState(null);
+  const [classifyingId, setClassifyingId]   = useState(null);
   const navigate = useNavigate();
-  const location = useLocation();
-  const user = pb.authStore.model;
 
   async function loadQuestions() {
     setLoading(true); setError('');
@@ -127,13 +187,8 @@ export default function Dashboard() {
     }
   }
 
-  function toggleSelect(id, e) {
-    e.stopPropagation();
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+  function toggleSelect(id) {
+    setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   }
 
   async function deleteSelected() {
@@ -151,58 +206,8 @@ export default function Dashboard() {
     }
   }
 
-  useEffect(() => { loadQuestions(); }, []);
-  useEffect(() => {
-    function closeMenu() { setOpenMenuId(null); }
-    document.addEventListener('mousedown', closeMenu);
-    return () => document.removeEventListener('mousedown', closeMenu);
-  }, []);
-
-  // ── Filtraggio ──
-  const filteredQuestions = useMemo(() => {
-    if (!globalFilter) return data;
-    const q = globalFilter.toLowerCase();
-    return data.filter(row =>
-      row.subject?.toLowerCase().includes(q) ||
-      row.topic?.toLowerCase().includes(q) ||
-      row.content?.toLowerCase().includes(q) ||
-      row.bloom_level?.toLowerCase().includes(q)
-    );
-  }, [data, globalFilter]);
-
-  // ── Raggruppamento per materia → argomento ──
-  const groupedData = useMemo(() => {
-    const groups = {};
-    filteredQuestions.forEach(q => {
-      const subject = (q.subject || 'Senza materia').trim();
-      const topic   = (q.topic   || 'Senza argomento').trim();
-      if (!groups[subject]) groups[subject] = {};
-      if (!groups[subject][topic]) groups[subject][topic] = [];
-      groups[subject][topic].push(q);
-    });
-    return Object.entries(groups).map(([subject, topicsMap]) => ({
-      subject,
-      topics: Object.entries(topicsMap).map(([topic, questions]) => ({ topic, questions })),
-    }));
-  }, [filteredQuestions]);
-
-  const totalGroups = groupedData.length;
-
-  function toggleSubject(subject) {
-    setExpandedSubjects(prev => { const next = new Set(prev); next.has(subject) ? next.delete(subject) : next.add(subject); return next; });
-  }
-  function toggleTopic(key) {
-    setExpandedTopics(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
-  }
-  function toggleQuestion(id) {
-    setExpandedQuestions(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
-  }
-
-  function handleLogout() { pb.authStore.clear(); navigate('/login'); }
-
   async function handleClassify(q) {
     setClassifyingId(q.id);
-    setOpenMenuId(null);
     try {
       const { winner, modelVotes } = await classifyBloomCouncil(q, import.meta.env.VITE_OPENROUTER_API_KEY);
       console.log(`[Bloom council] domanda: "${q.content.slice(0, 60)}…"`);
@@ -210,353 +215,250 @@ export default function Dashboard() {
       console.log(`[Bloom council] winner → ${winner}`);
       await loadQuestions();
     } catch (err) {
-      alert("Classificazione fallita: " + err.message);
+      setError('Classificazione fallita: ' + err.message);
     } finally {
       setClassifyingId(null);
     }
   }
 
-  // ── Render ──
+  useEffect(() => { loadQuestions(); }, []);
+
+  const subjectOf = q => (q.subject || 'Senza materia').trim();
+  const topicOf   = q => (q.topic   || 'Senza argomento').trim();
+
+  // ── Conteggi per la barra laterale (calcolati su tutto l'archivio) ──
+  const sidebarData = useMemo(() => {
+    const bySubject = {};
+    data.forEach(q => {
+      const s = subjectOf(q), t = topicOf(q);
+      if (!bySubject[s]) bySubject[s] = { count: 0, topics: {} };
+      bySubject[s].count++;
+      bySubject[s].topics[t] = (bySubject[s].topics[t] || 0) + 1;
+    });
+    return Object.entries(bySubject)
+      .map(([subject, v]) => ({
+        subject, count: v.count,
+        topics: Object.entries(v.topics).map(([topic, count]) => ({ topic, count })).sort((a, b) => a.topic.localeCompare(b.topic)),
+      }))
+      .sort((a, b) => a.subject.localeCompare(b.subject));
+  }, [data]);
+
+  const filtered = useMemo(() => {
+    const t = globalFilter.trim().toLowerCase();
+    return data.filter(q => {
+      if (subjectFilter && subjectOf(q) !== subjectFilter) return false;
+      if (topicFilter && topicOf(q) !== topicFilter) return false;
+      if (!t) return true;
+      return q.subject?.toLowerCase().includes(t) || q.topic?.toLowerCase().includes(t) ||
+             q.content?.toLowerCase().includes(t) || q.bloom_level?.toLowerCase().includes(t);
+    });
+  }, [data, globalFilter, subjectFilter, topicFilter]);
+
+  const allShownSelected = filtered.length > 0 && filtered.every(q => selectedIds.has(q.id));
+  const hasFilters = !!(globalFilter || subjectFilter || topicFilter);
+
+  function toggleAllShown() {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allShownSelected) filtered.forEach(q => next.delete(q.id));
+      else filtered.forEach(q => next.add(q.id));
+      return next;
+    });
+  }
+
+  function selectSubject(subject) {
+    setSubjectFilter(prev => prev === subject ? '' : subject);
+    setTopicFilter('');
+  }
+
   return (
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap');
         @keyframes spin { to { transform: rotate(360deg); } }
-        .tbl-row { cursor: pointer; transition: background 0.1s; }
-        .tbl-row:hover > td { background: #EDE8DC !important; }
-        .tbl-row-q:hover > td { background: #EDE8DC !important; }
+        .q-layout { display: grid; grid-template-columns: 230px 1fr; gap: 28px; align-items: start; }
+        .q-side-list { display: flex; flex-direction: column; gap: 2px; }
+        @media (max-width: 880px) {
+          .q-layout { display: flex; flex-direction: column; }
+          .q-side-list { flex-direction: row; flex-wrap: wrap; }
+          .q-topics { flex-basis: 100%; }
+        }
       `}</style>
 
       <div style={{ minHeight: '100vh', background: C.bg, fontFamily: font }}>
+        <Navbar />
 
-        {/* ── Topbar ── */}
-        <header style={{ position: 'sticky', top: 0, zIndex: 10, background: C.surface, borderBottom: `1px solid ${C.border}`, height: 56, padding: '0 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 30, height: 30, background: C.green, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <BookOpen size={14} color={C.greenAccent} />
-            </div>
-            <span style={{ fontFamily: serif, fontSize: 16, color: C.text, fontWeight: 500 }}>Portale Docenti</span>
-          </div>
-
-          {/* Nav tabs */}
-          <nav style={{ display: 'flex', gap: 4 }}>
-            <button
-              onClick={() => navigate('/')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 12px',
-                background: location.pathname === '/' ? C.green : 'transparent',
-                color: location.pathname === '/' ? '#FFF' : C.textMuted,
-                border: location.pathname === '/' ? 'none' : `1px solid ${C.border}`,
-                borderRadius: 6, cursor: 'pointer', fontFamily: font, fontSize: 12, fontWeight: 500,
-              }}
-            >
-              <BookOpen size={13} /> Domande
-            </button>
-            <button
-              onClick={() => navigate('/documents')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 12px',
-                background: location.pathname === '/documents' ? C.green : 'transparent',
-                color: location.pathname === '/documents' ? '#FFF' : C.textMuted,
-                border: location.pathname === '/documents' ? 'none' : `1px solid ${C.border}`,
-                borderRadius: 6, cursor: 'pointer', fontFamily: font, fontSize: 12, fontWeight: 500,
-              }}
-            >
-              <FileText size={13} /> Documenti
-            </button>
-            <button
-              onClick={() => navigate('/tests')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 12px',
-                background: location.pathname === '/tests' ? C.green : 'transparent',
-                color: location.pathname === '/tests' ? '#FFF' : C.textMuted,
-                border: location.pathname === '/tests' ? 'none' : `1px solid ${C.border}`,
-                borderRadius: 6, cursor: 'pointer', fontFamily: font, fontSize: 12, fontWeight: 500,
-              }}
-            >
-              <ClipboardList size={13} /> Test
-            </button>
-          </nav>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button
-              onClick={() => setShowInfo(true)}
-              style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 6, color: C.textMuted, cursor: 'pointer', padding: '6px 10px', display: 'flex', alignItems: 'center' }}
-              onMouseEnter={e => e.currentTarget.style.color = C.text}
-              onMouseLeave={e => e.currentTarget.style.color = C.textMuted}
-              title="Guida"
-            >
-              <HelpCircle size={14} />
-            </button>
-            <span style={{ fontSize: 12, color: C.textMuted }}>{user?.email}</span>
-            <button onClick={handleLogout}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textMuted, background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontFamily: font }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = '#B05A3A'; e.currentTarget.style.color = '#B05A3A'; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textMuted; }}
-            >
-              <LogOut size={13} /> Logout
-            </button>
-          </div>
-        </header>
-
-        {/* ── Main ── */}
-        <main style={{ padding: '2rem 1.5rem', maxWidth: 1200, margin: '0 auto' }}>
-
-          {/* Intestazione */}
+        <main style={{ padding: '2rem 2rem 4rem', maxWidth: 1360, margin: '0 auto' }}>
           <div style={{ marginBottom: '1.5rem' }}>
-            <h1 style={{ fontFamily: serif, fontSize: 22, color: C.text, fontWeight: 500, margin: '0 0 4px' }}>
-              Domande d'Esame
-            </h1>
-            <p style={{ fontSize: 13, color: C.textMuted, margin: 0 }}>
-              {filteredQuestions.length} domande{globalFilter ? ' trovate' : ' totali'} · {totalGroups} materie · clicca una riga per espanderla
+            <h1 style={{ fontFamily: serif, fontSize: 26, color: C.text, fontWeight: 500, margin: '0 0 4px' }}>Le tue domande</h1>
+            <p style={{ fontSize: 14, color: C.textMuted, margin: 0 }}>
+              {filtered.length} {filtered.length === 1 ? 'domanda' : 'domande'}{hasFilters ? ' trovate' : ' nel tuo archivio'}
             </p>
           </div>
 
-          {/* Toolbar */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '1.25rem' }}>
-            <div style={{ position: 'relative', flex: 1, maxWidth: 340 }}>
-              <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: C.textFaint }} />
-              <input
-                value={globalFilter ?? ''}
-                onChange={e => setGlobalFilter(e.target.value)}
-                placeholder="Cerca per materia, argomento, contenuto, livello…"
-                style={{ width: '100%', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px 8px 32px', fontSize: 13, color: C.text, fontFamily: font, outline: 'none', boxSizing: 'border-box' }}
-                onFocus={e => e.target.style.borderColor = '#5C7A5E'}
-                onBlur={e => e.target.style.borderColor = C.border}
-              />
-            </div>
+          <div className="q-layout">
+            {/* ── Barra laterale: materie e argomenti ── */}
+            {data.length > 0 && (
+              <aside>
+                <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: C.textFaint, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Layers size={13} /> Materie
+                </div>
+                <div className="q-side-list">
+                  <button
+                    onClick={() => { setSubjectFilter(''); setTopicFilter(''); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                      padding: '8px 12px', borderRadius: 8, border: 'none', textAlign: 'left', cursor: 'pointer',
+                      background: !subjectFilter ? C.green : 'transparent',
+                      color: !subjectFilter ? '#FFF' : C.textBody,
+                      fontFamily: font, fontSize: 13.5, fontWeight: 500,
+                    }}
+                  >
+                    Tutte le domande
+                    <span style={{ fontSize: 11, opacity: 0.8 }}>{data.length}</span>
+                  </button>
 
-            <button onClick={() => setShowAddModal(true)} title="Aggiungi domanda"
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: C.green, border: 'none', borderRadius: 8, cursor: 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>
-              <Plus size={14} /> Aggiungi
-            </button>
-
-            {selectedIds.size > 0 && (
-              <>
-                <button onClick={() => {
-                  const selected = data.filter(q => selectedIds.has(q.id));
-                  navigate('/tests', { state: { preselectedQuestions: selected } });
-                }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#E6EEF6', border: '1px solid #B8CDE0', borderRadius: 8, cursor: 'pointer', color: '#2A5C8A', fontFamily: font, fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>
-                  <ClipboardCheck size={14} />
-                  Crea test
-                </button>
-                <button onClick={() => setShowDeleteModal(true)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 8, cursor: 'pointer', color: C.error.text, fontFamily: font, fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>
-                  <Trash2 size={14} />
-                  Elimina {selectedIds.size} {selectedIds.size === 1 ? 'domanda' : 'domande'}
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Errore */}
-          {error && (
-            <div style={{ background: C.error.bg, border: `1px solid ${C.error.border}`, color: C.error.text, fontSize: 13, borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
-              {error}
-            </div>
-          )}
-
-          {/* Tabella */}
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr>
-                    <th style={thStyle(72)}></th>
-                    <th style={thStyle()}>Materia / Argomento / Domanda</th>
-                    <th style={thStyle(170)}>Livello Bloom</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td colSpan={3} style={{ padding: '3rem', textAlign: 'center', color: C.textFaint }}>
-                        <span style={{ display: 'inline-block', width: 16, height: 16, border: `2px solid ${C.border}`, borderTopColor: '#5C7A5E', borderRadius: '50%', animation: 'spin 0.7s linear infinite', marginRight: 8, verticalAlign: 'middle' }} />
-                        Caricamento…
-                      </td>
-                    </tr>
-                  ) : groupedData.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} style={{ padding: '3rem', textAlign: 'center', color: C.textFaint, fontSize: 13 }}>
-                        Nessuna domanda trovata.
-                      </td>
-                    </tr>
-                  ) : (
-                    groupedData.flatMap(({ subject, topics }, gi) => {
-                      const isSubjectExpanded = expandedSubjects.has(subject);
-                      const isEvenGroup = gi % 2 === 0;
-                      const groupBg = isEvenGroup ? 'transparent' : '#FAF7F2';
-
-                      const allSubjectQuestions = topics.flatMap(t => t.questions);
-                      const selectedInSubject = allSubjectQuestions.filter(q => selectedIds.has(q.id)).length;
-                      const allInSubjectSelected = selectedInSubject === allSubjectQuestions.length && allSubjectQuestions.length > 0;
-
-                      // ── Livello 1: riga materia ──
-                      const subjectRow = (
-                        <tr key={`subject-${subject}`} className="tbl-row"
-                          onClick={() => toggleSubject(subject)}
-                          style={{ borderBottom: `1px solid ${isSubjectExpanded ? C.border : C.borderLight}` }}
+                  {sidebarData.map(({ subject, count, topics }) => {
+                    const active = subjectFilter === subject;
+                    const sc = colorForTag(subject);
+                    return (
+                      <div key={subject}>
+                        <button
+                          onClick={() => selectSubject(subject)}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%',
+                            padding: '8px 12px', borderRadius: 8, border: 'none', textAlign: 'left', cursor: 'pointer',
+                            background: active ? sc.bg : 'transparent',
+                            color: active ? sc.color : C.textBody,
+                            fontFamily: font, fontSize: 13.5, fontWeight: active ? 600 : 500,
+                          }}
+                          onMouseEnter={e => { if (!active) e.currentTarget.style.background = C.expandBg; }}
+                          onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
                         >
-                          <td style={{ padding: '12px 14px', verticalAlign: 'middle', background: groupBg, width: 72 }}>
-                            <ChevronRight size={14} style={{ transform: isSubjectExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', color: isSubjectExpanded ? C.green : C.textMuted, display: 'block' }} />
-                          </td>
-                          <td style={{ padding: '12px 14px', verticalAlign: 'middle', background: groupBg }}>
-                            <span style={{ fontFamily: serif, fontWeight: 500, fontSize: 14, color: C.text }}>{subject}</span>
-                          </td>
-                          <td style={{ padding: '12px 14px', verticalAlign: 'middle', background: groupBg, textAlign: 'right' }}>
-                            {selectedInSubject > 0 && (
-                              <span style={{ fontSize: 11, color: C.error.text, background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 20, padding: '2px 8px', marginRight: 6, whiteSpace: 'nowrap' }}>
-                                {allInSubjectSelected ? 'tutte selezionate' : `${selectedInSubject} selezionate`}
-                              </span>
-                            )}
-                            <span style={{ fontSize: 12, color: C.textMuted, background: C.headerBg, border: `1px solid ${C.borderLight}`, borderRadius: 20, padding: '3px 10px', whiteSpace: 'nowrap' }}>
-                              {allSubjectQuestions.length} {allSubjectQuestions.length === 1 ? 'domanda' : 'domande'}
-                            </span>
-                          </td>
-                        </tr>
-                      );
+                          {subject}
+                          <span style={{ fontSize: 11, opacity: 0.75 }}>{count}</span>
+                        </button>
+                        {active && topics.length > 1 && (
+                          <div className="q-topics" style={{ display: 'flex', flexDirection: 'column', gap: 2, margin: '2px 0 4px', paddingLeft: 14, borderLeft: `2px solid ${sc.bg}` }}>
+                            {topics.map(({ topic, count: tc }) => {
+                              const activeTopic = topicFilter === topic;
+                              return (
+                                <button
+                                  key={topic}
+                                  onClick={() => setTopicFilter(prev => prev === topic ? '' : topic)}
+                                  style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                                    padding: '5px 10px', borderRadius: 6, border: 'none', textAlign: 'left', cursor: 'pointer',
+                                    background: activeTopic ? C.expandBg : 'transparent',
+                                    color: activeTopic ? C.green : C.textMuted,
+                                    fontFamily: font, fontSize: 12.5, fontWeight: activeTopic ? 600 : 400,
+                                  }}
+                                >
+                                  {topic}
+                                  <span style={{ fontSize: 10.5, opacity: 0.75 }}>{tc}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </aside>
+            )}
 
-                      if (!isSubjectExpanded) return [subjectRow];
+            {/* ── Contenuto principale ── */}
+            <section>
+              {/* Toolbar */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+                <div style={{ position: 'relative', flex: 1, minWidth: 220, maxWidth: 380 }}>
+                  <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.textFaint }} />
+                  <input
+                    value={globalFilter}
+                    onChange={e => setGlobalFilter(e.target.value)}
+                    placeholder="Cerca una domanda…"
+                    style={{ width: '100%', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px 10px 36px', fontSize: 14, color: C.text, fontFamily: font, outline: 'none', boxSizing: 'border-box' }}
+                    onFocus={e => e.target.style.borderColor = C.focusBorder}
+                    onBlur={e => e.target.style.borderColor = C.border}
+                  />
+                </div>
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, height: 42, padding: '0 20px', background: C.green, border: 'none', borderRadius: 10, cursor: 'pointer', color: '#FFF', fontFamily: font, fontSize: 14.5, fontWeight: 500, whiteSpace: 'nowrap' }}
+                >
+                  <Plus size={16} /> Nuova domanda
+                </button>
+              </div>
 
-                      // ── Livello 2: righe argomento ──
-                      const topicRows = topics.flatMap(({ topic, questions }) => {
-                        const topicKey = `${subject}::${topic}`;
-                        const isTopicExpanded = expandedTopics.has(topicKey);
-                        const topicBg = '#F5F2EB';
-                        const selectedInTopic = questions.filter(q => selectedIds.has(q.id)).length;
-
-                        const topicRow = (
-                          <tr key={`topic-${topicKey}`} className="tbl-row"
-                            onClick={() => toggleTopic(topicKey)}
-                            style={{ borderBottom: `1px solid ${isTopicExpanded ? C.border : C.borderLight}` }}
-                          >
-                            <td style={{ padding: '10px 14px', verticalAlign: 'middle', background: topicBg, width: 72 }}>
-                              <div style={{ paddingLeft: 20 }}>
-                                <ChevronRight size={13} style={{ transform: isTopicExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', color: isTopicExpanded ? C.greenLight : C.textFaint, display: 'block' }} />
-                              </div>
-                            </td>
-                            <td style={{ padding: '10px 14px 10px 34px', verticalAlign: 'middle', background: topicBg }}>
-                              <span style={{ fontSize: 13, color: C.textBody, fontWeight: 500 }}>{topic}</span>
-                            </td>
-                            <td style={{ padding: '10px 14px', verticalAlign: 'middle', background: topicBg, textAlign: 'right' }}>
-                              {selectedInTopic > 0 && (
-                                <span style={{ fontSize: 11, color: C.error.text, background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 20, padding: '2px 8px', marginRight: 6, whiteSpace: 'nowrap' }}>
-                                  {selectedInTopic} {selectedInTopic === 1 ? 'selezionata' : 'selezionate'}
-                                </span>
-                              )}
-                              <span style={{ fontSize: 12, color: C.textMuted, background: C.headerBg, border: `1px solid ${C.borderLight}`, borderRadius: 20, padding: '3px 10px', whiteSpace: 'nowrap' }}>
-                                {questions.length} {questions.length === 1 ? 'domanda' : 'domande'}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-
-                        if (!isTopicExpanded) return [topicRow];
-
-                        // ── Livello 3: righe domanda ──
-                        const questionRows = questions.flatMap(q => {
-                          const isQuestionExpanded = expandedQuestions.has(q.id);
-                          const qBg = '#F3EFE8';
-
-                          const qRow = (
-                            <tr key={`q-${q.id}`} className="tbl-row-q"
-                              onClick={() => toggleQuestion(q.id)}
-                              style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: 'pointer', transition: 'background 0.1s' }}
-                            >
-                              <td style={{ padding: '10px 14px', verticalAlign: 'middle', background: qBg, width: 72 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 4 }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedIds.has(q.id)}
-                                    onChange={e => toggleSelect(q.id, e)}
-                                    onClick={e => e.stopPropagation()}
-                                    style={{ width: 14, height: 14, cursor: 'pointer', accentColor: C.green, flexShrink: 0 }}
-                                  />
-                                  <ChevronRight size={13} style={{ transform: isQuestionExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', color: isQuestionExpanded ? C.green : C.textFaint, display: 'block', flexShrink: 0 }} />
-                                </div>
-                              </td>
-                              <td style={{ padding: '10px 14px 10px 48px', verticalAlign: 'middle', background: qBg }}>
-                                <span style={{ fontSize: 12.5, color: C.textBody, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                  {q.content || '—'}
-                                </span>
-                              </td>
-                              <td style={{ padding: '10px 14px', verticalAlign: 'middle', background: qBg }}>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                                  {classifyingId === q.id
-                                    ? <span style={{ fontSize: 13, color: C.textFaint, letterSpacing: '0.15em' }}>···</span>
-                                    : <BloomBadge level={q.bloom_level} />
-                                  }
-                                  <div style={{ position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
-                                    <button
-                                      onClick={e => { e.stopPropagation(); setOpenMenuId(openMenuId === q.id ? null : q.id); }}
-                                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', padding: '2px 4px', borderRadius: 4 }}
-                                      title="Azioni"
-                                    >
-                                      <MoreVertical size={14} />
-                                    </button>
-                                    {openMenuId === q.id && (
-                                      <div style={{ position: 'absolute', right: 0, top: '100%', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 50, minWidth: 160, overflow: 'hidden' }}>
-                                        <button
-                                          onClick={e => { e.stopPropagation(); setEditQuestion(q); setOpenMenuId(null); }}
-                                          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 14px', background: 'none', border: 'none', cursor: 'pointer', color: C.textBody, fontFamily: font, fontSize: 13, textAlign: 'left' }}
-                                          onMouseEnter={e => e.currentTarget.style.background = C.expandBg}
-                                          onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                        >
-                                          <Pencil size={13} /> Modifica
-                                        </button>
-                                        <button
-                                          onClick={e => { e.stopPropagation(); setSelectedIds(new Set([q.id])); setShowDeleteModal(true); setOpenMenuId(null); }}
-                                          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 14px', background: 'none', border: 'none', cursor: 'pointer', color: C.error.text, fontFamily: font, fontSize: 13, textAlign: 'left' }}
-                                          onMouseEnter={e => e.currentTarget.style.background = C.error.bg}
-                                          onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                        >
-                                          <Trash2 size={13} /> Elimina
-                                        </button>
-                                        <button
-                                          onClick={e => { e.stopPropagation(); handleClassify(q); }}
-                                          disabled={classifyingId !== null}
-                                          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 14px', background: 'none', border: 'none', cursor: classifyingId !== null ? 'not-allowed' : 'pointer', color: C.textBody, fontFamily: font, fontSize: 13, textAlign: 'left', opacity: classifyingId !== null ? 0.4 : 1 }}
-                                          onMouseEnter={e => { if (classifyingId === null) e.currentTarget.style.background = C.expandBg; }}
-                                          onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                        >
-                                          <Tag size={13} /> Classifica
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-
-                          const detailRow = isQuestionExpanded
-                            ? <QuestionDetail key={`detail-${q.id}`} question={q} />
-                            : null;
-
-                          return detailRow ? [qRow, detailRow] : [qRow];
-                        });
-
-                        return [topicRow, ...questionRows];
-                      });
-
-                      return [subjectRow, ...topicRows];
-                    })
+              {/* Barra selezione */}
+              {filtered.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.textMuted, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={allShownSelected} onChange={toggleAllShown} style={{ width: 15, height: 15, accentColor: C.green, cursor: 'pointer' }} />
+                    Seleziona tutte
+                  </label>
+                  {selectedIds.size > 0 && (
+                    <>
+                      <span style={{ fontSize: 13, color: C.greenLight, fontWeight: 500 }}>{selectedIds.size} selezionate</span>
+                      <button
+                        onClick={() => navigate('/tests', { state: { preselectedQuestions: data.filter(q => selectedIds.has(q.id)) } })}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#E6EEF6', border: '1px solid #B8CDE0', borderRadius: 8, cursor: 'pointer', color: '#2A5C8A', fontFamily: font, fontSize: 13, fontWeight: 500 }}
+                      >
+                        <ClipboardCheck size={14} /> Crea un test con queste
+                      </button>
+                      <button
+                        onClick={() => setShowDeleteModal(true)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 8, cursor: 'pointer', color: C.error.text, fontFamily: font, fontSize: 13, fontWeight: 500 }}
+                      >
+                        <Trash2 size={14} /> Elimina
+                      </button>
+                    </>
                   )}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              )}
+
+              {error && (
+                <div style={{ background: C.error.bg, border: `1px solid ${C.error.border}`, color: C.error.text, fontSize: 13, borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
+                  {error}
+                </div>
+              )}
+
+              {loading ? (
+                <div style={{ padding: '3rem', textAlign: 'center', color: C.textFaint }}>
+                  <Spinner size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> Caricamento…
+                </div>
+              ) : filtered.length === 0 ? (
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14 }}>
+                  <EmptyState
+                    icon={Inbox}
+                    message={hasFilters ? 'Nessuna domanda corrisponde ai filtri.' : 'Non hai ancora nessuna domanda. Creane una per iniziare.'}
+                    actionLabel={!hasFilters ? '+ Crea la tua prima domanda' : 'Azzera i filtri'}
+                    onAction={() => hasFilters ? (setGlobalFilter(''), setSubjectFilter(''), setTopicFilter('')) : setShowAddModal(true)}
+                  />
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))', gap: 16 }}>
+                  {filtered.map(q => (
+                    <QuestionCard
+                      key={q.id}
+                      q={q}
+                      selected={selectedIds.has(q.id)}
+                      onToggle={() => toggleSelect(q.id)}
+                      onEdit={() => setEditQuestion(q)}
+                      onDelete={() => { setSelectedIds(new Set([q.id])); setShowDeleteModal(true); }}
+                      onClassify={() => handleClassify(q)}
+                      classifying={classifyingId === q.id}
+                      classifyDisabled={classifyingId !== null}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
-
-
         </main>
       </div>
 
-      {/* ── Modale modifica domanda ── */}
       {editQuestion && (
         <EditQuestionModal
           question={editQuestion}
@@ -566,7 +468,6 @@ export default function Dashboard() {
         />
       )}
 
-      {/* ── Modale aggiunta domanda ── */}
       {showAddModal && (
         <AddQuestionModal
           data={data}
@@ -575,38 +476,16 @@ export default function Dashboard() {
         />
       )}
 
-      {/* ── Modale di conferma eliminazione ── */}
-      {showInfo && <InfoModal onClose={() => setShowInfo(false)} />}
-
       {showDeleteModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(28,43,29,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
-          onClick={() => { if (!deleting) setShowDeleteModal(false); }}
-        >
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '28px 32px', maxWidth: 420, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.12)', fontFamily: font }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-              <div style={{ width: 36, height: 36, background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Trash2 size={16} color={C.error.text} />
-              </div>
-              <h2 style={{ fontFamily: serif, fontSize: 17, fontWeight: 500, color: C.text, margin: 0 }}>Elimina domande</h2>
-            </div>
-            <p style={{ fontSize: 14, color: C.textBody, lineHeight: 1.6, margin: '0 0 24px' }}>
-              Stai per eliminare <strong>{selectedIds.size} {selectedIds.size === 1 ? 'domanda' : 'domande'}</strong>. Questa azione è irreversibile.
-            </p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowDeleteModal(false)} disabled={deleting}
-                style={{ padding: '8px 18px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: deleting ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, opacity: deleting ? 0.5 : 1 }}>
-                Annulla
-              </button>
-              <button onClick={deleteSelected} disabled={deleting}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.error.text, border: 'none', borderRadius: 8, cursor: deleting ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: deleting ? 0.8 : 1 }}>
-                {deleting && <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />}
-                {deleting ? 'Eliminazione…' : 'Elimina'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmModal
+          icon={Trash2}
+          title="Elimina domande"
+          message={<>Stai per eliminare <strong>{selectedIds.size} {selectedIds.size === 1 ? 'domanda' : 'domande'}</strong>. Questa azione è irreversibile.</>}
+          confirmLabel="Elimina"
+          loading={deleting}
+          onConfirm={deleteSelected}
+          onCancel={() => setShowDeleteModal(false)}
+        />
       )}
     </>
   );

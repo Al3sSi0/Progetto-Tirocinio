@@ -4,13 +4,14 @@ import pb from '../../lib/pocketbase';
 import { C, font, serif, BLOOM_LEVELS, BLOOM_LABELS } from '../../styles/theme';
 import SuggestInput from './SuggestInput';
 import { useAllSuggestions } from '../../lib/useAllSuggestions';
+import BloomPicker from '../common/BloomPicker';
+import ChipSelect from '../common/ChipSelect';
 
 const initialForm = {
   subject:        '',
   topic:          '',
   content:        '',
   options:        [''],
-  correct_answer: '',
   bloom_level:    '',
 };
 
@@ -37,6 +38,7 @@ function parseGeneratedQuestions(rawText) {
 export default function AddQuestionModal({ onClose, onSaved, data }) {
   // --- Manual form state ---
   const [form, setForm] = useState(initialForm);
+  const [correctIdx, setCorrectIdx] = useState(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
@@ -46,7 +48,6 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
   const topicRef        = useRef(null);
   const contentRef      = useRef(null);
   const optionsRef      = useRef(null);
-  const correctAnswRef  = useRef(null);
   const scrollBodyRef   = useRef(null);
 
   // --- Mode ---
@@ -66,17 +67,11 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
   const [docSubjectFilter, setDocSubjectFilter] = useState('');
   const [docTopicFilter, setDocTopicFilter] = useState('');
   const [editingGenIdx, setEditingGenIdx] = useState(null);
-  const [editGenForm, setEditGenForm] = useState({ content: '', options: [''], correct_answer: '' });
+  const [editGenForm, setEditGenForm] = useState({ subject: '', topic: '', content: '', options: [''] });
+  const [editGenCorrectIdx, setEditGenCorrectIdx] = useState(null);
 
   // --- Manual form derived state ---
   const { subjects: subjectSuggestions, topics: topicSuggestions } = useAllSuggestions(form.subject, data);
-
-  const validOptions = form.options.filter(o => o.trim() !== '');
-  useEffect(() => {
-    if (form.correct_answer && !validOptions.includes(form.correct_answer)) {
-      setForm(f => ({ ...f, correct_answer: '' }));
-    }
-  }, [form.options]);
 
   // Load documents when switching to generate mode
   useEffect(() => {
@@ -103,6 +98,12 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
   function addOption() { setForm(f => ({ ...f, options: [...f.options, ''] })); }
   function removeOption(idx) {
     setForm(f => { const options = f.options.filter((_, i) => i !== idx); return { ...f, options: options.length ? options : [''] }; });
+    setCorrectIdx(prev => {
+      if (prev === null) return prev;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
   }
 
   function scrollToRef(ref) {
@@ -120,14 +121,15 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
     const topic   = form.topic.trim();
     const content = form.content.trim();
     const opts    = form.options.filter(o => o.trim() !== '');
+    const correct_answer = (correctIdx !== null ? (form.options[correctIdx] || '') : '').trim();
 
     const errors = {};
     if (!subject)  errors.subject = 'La materia è obbligatoria.';
     if (!topic)    errors.topic   = "L'argomento è obbligatorio.";
     if (!content)  errors.content = 'Il testo della domanda è obbligatorio.';
     if (opts.length === 0) errors.options = "Aggiungi almeno un'opzione di risposta.";
-    if (!form.correct_answer || !opts.includes(form.correct_answer))
-      errors.correct_answer = 'Seleziona una risposta corretta tra le opzioni.';
+    if (!correct_answer || !opts.includes(correct_answer))
+      errors.correct_answer = 'Seleziona la risposta corretta tra le opzioni.';
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -137,7 +139,7 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
         { key: 'topic',         ref: topicRef },
         { key: 'content',       ref: contentRef },
         { key: 'options',       ref: optionsRef },
-        { key: 'correct_answer',ref: correctAnswRef },
+        { key: 'correct_answer',ref: optionsRef },
       ];
       const first = order.find(({ key }) => errors[key]);
       if (first) scrollToRef(first.ref);
@@ -150,7 +152,7 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
       await pb.collection('Question').create({
         subject, topic, content,
         options:        opts,
-        correct_answer: form.correct_answer,
+        correct_answer,
         bloom_level:    form.bloom_level,
         owner:          pb.authStore.model.id,
       });
@@ -234,13 +236,27 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
   function openEditGen(idx) {
     const q = generatedQuestions[idx];
     setEditingGenIdx(idx);
-    setEditGenForm({ subject: q.subject || '', topic: q.topic || '', content: q.content, options: [...q.options], correct_answer: q.correct_answer });
+    const options = [...q.options];
+    const initialIdx = options.findIndex(o => o === q.correct_answer);
+    setEditGenForm({ subject: q.subject || '', topic: q.topic || '', content: q.content, options });
+    setEditGenCorrectIdx(initialIdx >= 0 ? initialIdx : null);
+  }
+
+  function removeEditGenOption(idx) {
+    setEditGenForm(f => { const options = f.options.filter((_, i) => i !== idx); return { ...f, options: options.length ? options : [''] }; });
+    setEditGenCorrectIdx(prev => {
+      if (prev === null) return prev;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
   }
 
   function confirmEditGen() {
     const opts = editGenForm.options.filter(o => o.trim() !== '');
     if (!editGenForm.content.trim() || opts.length === 0) return;
-    const correct_answer = opts.includes(editGenForm.correct_answer) ? editGenForm.correct_answer : opts[0];
+    const rawCorrect = (editGenCorrectIdx !== null ? (editGenForm.options[editGenCorrectIdx] || '') : '').trim();
+    const correct_answer = opts.includes(rawCorrect) ? rawCorrect : opts[0];
     setGeneratedQuestions(prev => prev.map((q, i) => i === editingGenIdx ? { ...q, subject: editGenForm.subject, topic: editGenForm.topic, content: editGenForm.content.trim(), options: opts, correct_answer } : q));
     setEditingGenIdx(null);
   }
@@ -321,7 +337,7 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
       }
     `}</style>
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(28,43,29,0.40)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+      style={{ position: 'fixed', inset: 0, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
       onClick={() => { if (!isBusy) onClose(); }}
     >
       <div
@@ -368,11 +384,21 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
             </div>
 
             <div ref={optionsRef}>
-              <label style={labelStyle}>Opzioni di risposta *</label>
+              <label style={labelStyle}>Opzioni di risposta * <span style={{ fontWeight: 400, color: C.textFaint }}>— seleziona il pallino per indicare quella corretta</span></label>
               {fieldErrors.options && <div style={fieldErrorStyle}>{fieldErrors.options}</div>}
+              {fieldErrors.correct_answer && <div style={fieldErrorStyle}>{fieldErrors.correct_answer}</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {form.options.map((opt, idx) => (
-                  <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="radio"
+                      name="add-question-correct-answer"
+                      checked={correctIdx === idx}
+                      onChange={() => setCorrectIdx(idx)}
+                      disabled={!opt.trim()}
+                      title="Segna come risposta corretta"
+                      style={{ width: 15, height: 15, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
+                    />
                     <input value={opt} onChange={e => setOption(idx, e.target.value)} placeholder={`Opzione ${idx + 1}`} style={{ ...inputStyle, flex: 1 }} />
                     <button onClick={() => removeOption(idx)}
                       style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, flexShrink: 0 }}>
@@ -387,22 +413,9 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
               </div>
             </div>
 
-            <div ref={correctAnswRef}>
-              <label style={labelStyle}>Risposta corretta *</label>
-              {fieldErrors.correct_answer && <div style={fieldErrorStyle}>{fieldErrors.correct_answer}</div>}
-              <select value={form.correct_answer} onChange={e => setField('correct_answer', e.target.value)}
-                style={{ ...inputStyle, cursor: 'pointer', borderColor: fieldErrors.correct_answer ? C.error.border : C.border }}>
-                <option value="">— seleziona —</option>
-                {validOptions.map((o, i) => <option key={i} value={o}>{o}</option>)}
-              </select>
-            </div>
-
             <div>
               <label style={labelStyle}>Livello Bloom</label>
-              <select value={form.bloom_level} onChange={e => setField('bloom_level', e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-                <option value="">— nessuno —</option>
-                {BLOOM_LEVELS.map(l => <option key={l} value={l}>{BLOOM_LABELS[l]}</option>)}
-              </select>
+              <BloomPicker value={form.bloom_level} onChange={v => setField('bloom_level', v)} />
             </div>
 
             {formError && (
@@ -430,22 +443,15 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                   (docSubjectFilter ? documents.filter(d => (d.subject || '').trim() === docSubjectFilter) : documents)
                     .map(d => (d.topic || '').trim()).filter(Boolean)
                 )].sort();
-                const selectStyle = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 10px', fontSize: 12.5, color: C.text, fontFamily: font, outline: 'none', cursor: 'pointer', flex: 1 };
+                const resetGen = () => { setSelectedDocId(''); setGeneratedQuestions([]); setSelectedGenIdx(new Set()); setGenError(''); };
                 return (
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <select value={docSubjectFilter}
-                      onChange={e => { setDocSubjectFilter(e.target.value); setDocTopicFilter(''); setSelectedDocId(''); setGeneratedQuestions([]); setSelectedGenIdx(new Set()); setGenError(''); }}
-                      disabled={generating} style={selectStyle}>
-                      <option value="">Tutte le materie</option>
-                      {subjectOptions.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <select value={docTopicFilter}
-                      onChange={e => { setDocTopicFilter(e.target.value); setSelectedDocId(''); setGeneratedQuestions([]); setSelectedGenIdx(new Set()); setGenError(''); }}
-                      disabled={generating || !docSubjectFilter}
-                      style={{ ...selectStyle, opacity: docSubjectFilter ? 1 : 0.45, cursor: (generating || !docSubjectFilter) ? 'not-allowed' : 'pointer' }}>
-                      <option value="">Tutti gli argomenti</option>
-                      {topicOptions.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <ChipSelect options={subjectOptions} value={docSubjectFilter} allLabel="Tutte le materie" disabled={generating}
+                      onChange={v => { setDocSubjectFilter(v); setDocTopicFilter(''); resetGen(); }} />
+                    {docSubjectFilter && topicOptions.length > 0 && (
+                      <ChipSelect options={topicOptions} value={docTopicFilter} allLabel="Tutti gli argomenti" disabled={generating}
+                        onChange={v => { setDocTopicFilter(v); resetGen(); }} />
+                    )}
                   </div>
                 );
               })()}
@@ -566,17 +572,26 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                               />
                             </div>
                             <div>
-                              <label style={labelStyle}>Opzioni</label>
+                              <label style={labelStyle}>Opzioni <span style={{ fontWeight: 400, color: C.textFaint }}>— seleziona il pallino per la corretta</span></label>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                                 {editGenForm.options.map((opt, oi) => (
                                   <div key={oi} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                    <input
+                                      type="radio"
+                                      name={`editgen-correct-${editingGenIdx}`}
+                                      checked={editGenCorrectIdx === oi}
+                                      onChange={() => setEditGenCorrectIdx(oi)}
+                                      disabled={!opt.trim()}
+                                      title="Segna come risposta corretta"
+                                      style={{ width: 14, height: 14, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
+                                    />
                                     <input
                                       value={opt}
                                       onChange={e => setEditGenOption(oi, e.target.value)}
                                       style={{ ...inputStyle, flex: 1 }}
                                     />
                                     <button
-                                      onClick={() => setEditGenForm(f => { const options = f.options.filter((_, i) => i !== oi); return { ...f, options: options.length ? options : [''] }; })}
+                                      onClick={() => removeEditGenOption(oi)}
                                       style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, flexShrink: 0 }}
                                     >
                                       <X size={12} />
@@ -590,16 +605,6 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                                   <Plus size={11} /> Aggiungi opzione
                                 </button>
                               </div>
-                            </div>
-                            <div>
-                              <label style={labelStyle}>Risposta corretta</label>
-                              <select
-                                value={editGenForm.correct_answer}
-                                onChange={e => setEditGenForm(f => ({ ...f, correct_answer: e.target.value }))}
-                                style={{ ...inputStyle, cursor: 'pointer' }}
-                              >
-                                {editGenForm.options.filter(o => o.trim()).map((o, i) => <option key={i} value={o}>{o}</option>)}
-                              </select>
                             </div>
                             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                               <button

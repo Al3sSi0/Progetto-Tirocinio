@@ -1,9 +1,14 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { X, Trash2, Plus, Pencil, Check, Search, GripVertical } from 'lucide-react';
+import { X, Trash2, Plus, Pencil, Check, Search, GripVertical, Inbox } from 'lucide-react';
 import pb from '../../lib/pocketbase';
 import { C, font, serif, BLOOM_STYLES, BLOOM_LABELS, BLOOM_LEVELS } from '../../styles/theme';
 import SuggestInput from '../dashboard/SuggestInput';
 import { useAllSuggestions } from '../../lib/useAllSuggestions';
+import Spinner from '../common/Spinner';
+import EmptyState from '../common/EmptyState';
+import ConfirmModal from '../common/ConfirmModal';
+import BloomPicker from '../common/BloomPicker';
+import ChipSelect from '../common/ChipSelect';
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
 
@@ -28,7 +33,7 @@ function parseGeneratedQuestions(rawText) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const initialManualForm = {
-  subject: '', topic: '', content: '', options: [''], correct_answer: '', bloom_level: '',
+  subject: '', topic: '', content: '', options: [''], bloom_level: '',
 };
 
 export default function TestModal({ test = null, data, onClose, onSaved, initialQuestions = [] }) {
@@ -50,10 +55,13 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
     return Array.isArray(test.expand.questions) ? test.expand.questions : [test.expand.questions];
   });
   const [removingIds, setRemovingIds] = useState(new Set());
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [editingQId, setEditingQId]   = useState(null);
-  const [editQForm, setEditQForm]     = useState({ subject: '', topic: '', content: '', options: [''], correct_answer: '', bloom_level: '' });
+  const [editQForm, setEditQForm]     = useState({ subject: '', topic: '', content: '', options: [''], bloom_level: '' });
+  const [editQCorrectIdx, setEditQCorrectIdx] = useState(null);
   const [savingEdit, setSavingEdit]   = useState(false);
   const [editError, setEditError]     = useState('');
+  const [subBusy, setSubBusy]         = useState(false);
 
   // ── Drag & drop riordino domande ──────────────────────────────────────────
   const [dragIdx, setDragIdx]         = useState(null);
@@ -113,25 +121,39 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
   function removeSelected() {
     setQuestions(prev => prev.filter(q => !removingIds.has(q.id)));
     setRemovingIds(new Set());
+    setShowRemoveConfirm(false);
   }
 
   function openEditQ(q) {
     setEditingQId(q.id);
+    const options = Array.isArray(q.options) ? [...q.options] : [''];
+    const initialIdx = options.findIndex(o => o === q.correct_answer);
     setEditQForm({
       subject:        q.subject       || '',
       topic:          q.topic         || '',
       content:        q.content       || '',
-      options:        Array.isArray(q.options) ? [...q.options] : [''],
-      correct_answer: q.correct_answer || '',
+      options,
       bloom_level:    q.bloom_level   || '',
     });
+    setEditQCorrectIdx(initialIdx >= 0 ? initialIdx : null);
     setEditError('');
+  }
+
+  function removeEditQOption(idx) {
+    setEditQForm(f => { const options = f.options.filter((_, i) => i !== idx); return { ...f, options: options.length ? options : [''] }; });
+    setEditQCorrectIdx(prev => {
+      if (prev === null) return prev;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
   }
 
   async function confirmEditQ() {
     const opts = editQForm.options.filter(o => o.trim() !== '');
     if (!editQForm.content.trim() || !opts.length) { setEditError('Testo e opzioni sono obbligatori.'); return; }
-    const correct_answer = opts.includes(editQForm.correct_answer) ? editQForm.correct_answer : opts[0];
+    const rawCorrect = (editQCorrectIdx !== null ? (editQForm.options[editQCorrectIdx] || '') : '').trim();
+    const correct_answer = opts.includes(rawCorrect) ? rawCorrect : opts[0];
     setSavingEdit(true); setEditError('');
     try {
       const updated = await pb.collection('Question').update(editingQId, {
@@ -205,12 +227,13 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
   });
 
   const saveLabel = isEdit ? 'Salva modifiche' : 'Salva';
+  const isModalBusy = saving || subBusy;
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(28,43,29,0.40)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
-      onClick={() => { if (!saving) onClose(); }}
+      style={{ position: 'fixed', inset: 0, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+      onClick={() => { if (!isModalBusy) onClose(); }}
     >
       <div
         style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: 'min(640px, 90vw)', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.14)', fontFamily: font }}
@@ -221,7 +244,7 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
           <h2 style={{ fontFamily: serif, fontSize: 17, fontWeight: 500, color: C.text, margin: 0 }}>
             {isEdit ? 'Modifica test' : 'Nuovo test'}
           </h2>
-          <button onClick={onClose} disabled={saving} style={{ background: 'none', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', color: C.textMuted, padding: 4, display: 'flex', opacity: saving ? 0.4 : 1 }}>
+          <button onClick={onClose} disabled={isModalBusy} style={{ background: 'none', border: 'none', cursor: isModalBusy ? 'not-allowed' : 'pointer', color: C.textMuted, padding: 4, display: 'flex', opacity: isModalBusy ? 0.4 : 1 }}>
             <X size={16} />
           </button>
         </div>
@@ -234,7 +257,7 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
             <div>
               <label style={labelStyle}>Nome test *</label>
               <input type="text" value={form.description} onChange={e => setField('description', e.target.value)} placeholder="Es. Verifica Matematica — Derivate" style={inputStyle}
-                onFocus={e => e.target.style.borderColor = '#5C7A5E'} onBlur={e => e.target.style.borderColor = C.border} />
+                onFocus={e => e.target.style.borderColor = C.focusBorder} onBlur={e => e.target.style.borderColor = C.border} />
             </div>
             <SuggestInput label="Materia"    value={form.subject} onChange={v => setField('subject', v)} suggestions={subjectSuggestions} />
             <SuggestInput label="Argomento"  value={form.topic}   onChange={v => setField('topic', v)}   suggestions={topicSuggestions} />
@@ -251,7 +274,7 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
                 Domande nel test ({questions.length})
               </span>
               {removingIds.size > 0 && (
-                <button onClick={removeSelected} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 6, cursor: 'pointer', color: C.error.text, fontFamily: font, fontSize: 12, fontWeight: 500 }}>
+                <button onClick={() => setShowRemoveConfirm(true)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 6, cursor: 'pointer', color: C.error.text, fontFamily: font, fontSize: 12, fontWeight: 500 }}>
                   <Trash2 size={12} /> Rimuovi {removingIds.size} {removingIds.size === 1 ? 'domanda' : 'domande'}
                 </button>
               )}
@@ -259,8 +282,8 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
 
             {/* Lista domande correnti */}
             {questions.length === 0 ? (
-              <div style={{ padding: '14px', background: C.surface, borderRadius: 8, border: `1px dashed ${C.border}`, textAlign: 'center', color: C.textFaint, fontSize: 13 }}>
-                Nessuna domanda nel test.
+              <div style={{ border: `1px dashed ${C.border}`, borderRadius: 8 }}>
+                <EmptyState icon={Inbox} message="Nessuna domanda nel test." />
               </div>
             ) : (
               <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
@@ -290,24 +313,32 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
                           </div>
                           <div><label style={labelStyle}>Testo della domanda</label><textarea value={editQForm.content} onChange={e => setEditQForm(f => ({ ...f, content: e.target.value }))} rows={2} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} /></div>
                           <div>
-                            <label style={labelStyle}>Opzioni</label>
+                            <label style={labelStyle}>Opzioni <span style={{ fontWeight: 400, color: C.textFaint }}>— seleziona il pallino per la corretta</span></label>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                               {editQForm.options.map((opt, oi) => (
-                                <div key={oi} style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                                <div key={oi} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                  <input
+                                    type="radio"
+                                    name={`testmodal-editq-correct-${q.id}`}
+                                    checked={editQCorrectIdx === oi}
+                                    onChange={() => setEditQCorrectIdx(oi)}
+                                    disabled={!opt.trim()}
+                                    title="Segna come risposta corretta"
+                                    style={{ width: 14, height: 14, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
+                                  />
                                   <input value={opt} onChange={e => setEditQForm(f => { const options = [...f.options]; options[oi] = e.target.value; return { ...f, options }; })} style={{ ...inputStyle, flex: 1 }} />
-                                  <button onClick={() => setEditQForm(f => { const options = f.options.filter((_, j) => j !== oi); return { ...f, options: options.length ? options : [''] }; })} style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 5, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0 }}><X size={11} /></button>
+                                  <button onClick={() => removeEditQOption(oi)} style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 5, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0 }}><X size={11} /></button>
                                 </div>
                               ))}
                               <button onClick={() => setEditQForm(f => ({ ...f, options: [...f.options, ''] }))} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: 'none', border: `1px dashed ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 11 }}><Plus size={10} /> Aggiungi</button>
                             </div>
                           </div>
-                          <div><label style={labelStyle}>Risposta corretta</label><select value={editQForm.correct_answer} onChange={e => setEditQForm(f => ({ ...f, correct_answer: e.target.value }))} style={{ ...inputStyle, cursor: 'pointer' }}>{editQForm.options.filter(o => o.trim()).map((o, j) => <option key={j} value={o}>{o}</option>)}</select></div>
-                          <div><label style={labelStyle}>Livello Bloom</label><select value={editQForm.bloom_level} onChange={e => setEditQForm(f => ({ ...f, bloom_level: e.target.value }))} style={{ ...inputStyle, cursor: 'pointer' }}><option value="">— nessuno —</option>{BLOOM_LEVELS.map(l => <option key={l} value={l}>{BLOOM_LABELS[l]}</option>)}</select></div>
+                          <div><label style={labelStyle}>Livello Bloom</label><BloomPicker value={editQForm.bloom_level} onChange={v => setEditQForm(f => ({ ...f, bloom_level: v }))} /></div>
                           {editError && <div style={{ background: C.error.bg, border: `1px solid ${C.error.border}`, color: C.error.text, fontSize: 12, borderRadius: 7, padding: '8px 12px' }}>{editError}</div>}
                           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                             <button onClick={() => { setEditingQId(null); setEditError(''); }} disabled={savingEdit} style={{ padding: '4px 12px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: savingEdit ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 12, opacity: savingEdit ? 0.5 : 1 }}>Annulla</button>
                             <button onClick={confirmEditQ} disabled={savingEdit} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', background: C.green, border: 'none', borderRadius: 6, cursor: savingEdit ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 12, fontWeight: 500, opacity: savingEdit ? 0.8 : 1 }}>
-                              {savingEdit ? <span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> : <Check size={11} />}
+                              {savingEdit ? <Spinner size={10} color="#FFF" trackColor="rgba(255,255,255,0.4)" /> : <Check size={11} />}
                               {savingEdit ? 'Salvataggio…' : 'Conferma'}
                             </button>
                           </div>
@@ -371,6 +402,7 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
                   <ManualTab
                     allQuestions={allQuestions}
                     onAdd={handleQuestionsAdded}
+                    onBusyChange={setSubBusy}
                     inputStyle={inputStyle}
                     labelStyle={labelStyle}
                   />
@@ -378,6 +410,7 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
                 {addMode === 'generate' && (
                   <GenerateTab
                     onAdd={handleQuestionsAdded}
+                    onBusyChange={setSubBusy}
                     inputStyle={inputStyle}
                     labelStyle={labelStyle}
                   />
@@ -398,7 +431,7 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
           {/* Messaggi */}
           {(warning || formError) && (
             <div style={{ padding: '0 24px 16px' }}>
-              {warning && <div style={{ background: '#FBF2DC', border: '1px solid #D4B84A', color: '#7A5010', fontSize: 13, borderRadius: 8, padding: '10px 14px' }}>{warning} Premi nuovamente "{saveLabel}" per confermare.</div>}
+              {warning && <div style={{ background: C.warning.bg, border: `1px solid ${C.warning.border}`, color: C.warning.text, fontSize: 13, borderRadius: 8, padding: '10px 14px' }}>{warning} Premi nuovamente "{saveLabel}" per confermare.</div>}
               {formError && <div style={{ background: C.error.bg, border: `1px solid ${C.error.border}`, color: C.error.text, fontSize: 13, borderRadius: 8, padding: '10px 14px' }}>{formError}</div>}
             </div>
           )}
@@ -406,15 +439,26 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
 
         {/* ── Footer ── */}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '16px 24px', borderTop: `1px solid ${C.borderLight}`, flexShrink: 0 }}>
-          <button onClick={onClose} disabled={saving} style={{ padding: '8px 18px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, opacity: saving ? 0.5 : 1 }}>
+          <button onClick={onClose} disabled={isModalBusy} style={{ padding: '8px 18px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: isModalBusy ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, opacity: isModalBusy ? 0.5 : 1 }}>
             Annulla
           </button>
-          <button onClick={handleSubmit} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.green, border: 'none', borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: saving ? 0.8 : 1 }}>
-            {saving && <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />}
+          <button onClick={handleSubmit} disabled={isModalBusy} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.green, border: 'none', borderRadius: 8, cursor: isModalBusy ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: isModalBusy ? 0.8 : 1 }}>
+            {saving && <Spinner size={12} color="#FFF" trackColor="rgba(255,255,255,0.4)" />}
             {saving ? 'Salvataggio…' : saveLabel}
           </button>
         </div>
       </div>
+
+      {showRemoveConfirm && (
+        <ConfirmModal
+          icon={Trash2}
+          title="Rimuovi domande dal test"
+          message={<>Stai per rimuovere <strong>{removingIds.size} {removingIds.size === 1 ? 'domanda' : 'domande'}</strong> da questo test (la domanda resta comunque nel tuo archivio).</>}
+          confirmLabel="Rimuovi"
+          onConfirm={removeSelected}
+          onCancel={() => setShowRemoveConfirm(false)}
+        />
+      )}
     </div>
   );
 }
@@ -423,43 +467,47 @@ export default function TestModal({ test = null, data, onClose, onSaved, initial
 // Tab: Manuale
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ManualTab({ allQuestions, onAdd, inputStyle, labelStyle }) {
+function ManualTab({ allQuestions, onAdd, onBusyChange, inputStyle, labelStyle }) {
   const [form, setForm]           = useState(initialManualForm);
+  const [correctIdx, setCorrectIdx] = useState(null);
   const [saving, setSaving]       = useState(false);
   const [formError, setFormError] = useState('');
   const [warning, setWarning]     = useState('');
 
   const { subjects: subjectSuggestions, topics: topicSuggestions } = useAllSuggestions(form.subject, allQuestions);
 
-  const validOptions = form.options.filter(o => o.trim() !== '');
-  useEffect(() => {
-    if (form.correct_answer && !validOptions.includes(form.correct_answer))
-      setForm(f => ({ ...f, correct_answer: '' }));
-  }, [form.options]);
+  useEffect(() => { onBusyChange?.(saving); return () => onBusyChange?.(false); }, [saving]);
 
   function setField(key, val) { setForm(f => ({ ...f, [key]: val })); setFormError(''); setWarning(''); }
   function setOption(idx, val) { setForm(f => { const options = [...f.options]; options[idx] = val; return { ...f, options }; }); setFormError(''); }
   function addOption() { setForm(f => ({ ...f, options: [...f.options, ''] })); }
-  function removeOption(idx) { setForm(f => { const options = f.options.filter((_, i) => i !== idx); return { ...f, options: options.length ? options : [''] }; }); }
+  function removeOption(idx) {
+    setForm(f => { const options = f.options.filter((_, i) => i !== idx); return { ...f, options: options.length ? options : [''] }; });
+    setCorrectIdx(prev => {
+      if (prev === null) return prev;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
+  }
 
   async function handleSubmit() {
     const subject = form.subject.trim(), topic = form.topic.trim(), content = form.content.trim();
     const opts = form.options.filter(o => o.trim() !== '');
+    const correct_answer = (correctIdx !== null ? (form.options[correctIdx] || '') : '').trim();
     if (!content) { setFormError('Il testo della domanda è obbligatorio.'); return; }
     if (!opts.length) { setFormError("Aggiungi almeno un'opzione di risposta."); return; }
-    if (!form.correct_answer || !opts.includes(form.correct_answer)) { setFormError('Seleziona una risposta corretta.'); return; }
+    if (!correct_answer || !opts.includes(correct_answer)) { setFormError('Seleziona la risposta corretta.'); return; }
     if (!subject && topic) { setFormError('Inserisci la materia prima di specificare un argomento.'); setWarning(''); return; }
     const warnMsg = !subject && !topic ? 'Sicuro di voler salvare la domanda senza materia e senza argomento?'
       : subject && !topic ? 'Sicuro di voler salvare la domanda senza argomento?' : '';
     if (warnMsg && warning !== warnMsg) { setWarning(warnMsg); setFormError(''); return; }
     setSaving(true); setFormError(''); setWarning('');
     try {
-      const record = await pb.collection('Question').create({ subject, topic, content, options: opts, correct_answer: form.correct_answer, bloom_level: form.bloom_level, owner: pb.authStore.model.id });
+      const record = await pb.collection('Question').create({ subject, topic, content, options: opts, correct_answer, bloom_level: form.bloom_level, owner: pb.authStore.model.id });
       onAdd([record]);
     } catch { setFormError('Errore durante il salvataggio. Riprova.'); setSaving(false); }
   }
-
-  const spinnerStyle = { display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'spin 0.7s linear infinite' };
 
   return (
     <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -470,10 +518,19 @@ function ManualTab({ allQuestions, onAdd, inputStyle, labelStyle }) {
         <textarea value={form.content} onChange={e => setField('content', e.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }} />
       </div>
       <div>
-        <label style={labelStyle}>Opzioni di risposta *</label>
+        <label style={labelStyle}>Opzioni di risposta * <span style={{ fontWeight: 400, color: C.textFaint }}>— seleziona il pallino per indicare quella corretta</span></label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {form.options.map((opt, idx) => (
             <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type="radio"
+                name="testmodal-manual-correct-answer"
+                checked={correctIdx === idx}
+                onChange={() => setCorrectIdx(idx)}
+                disabled={!opt.trim()}
+                title="Segna come risposta corretta"
+                style={{ width: 14, height: 14, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
+              />
               <input value={opt} onChange={e => setOption(idx, e.target.value)} placeholder={`Opzione ${idx + 1}`} style={{ ...inputStyle, flex: 1 }} />
               <button onClick={() => removeOption(idx)} style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, flexShrink: 0 }}><X size={12} /></button>
             </div>
@@ -484,24 +541,14 @@ function ManualTab({ allQuestions, onAdd, inputStyle, labelStyle }) {
         </div>
       </div>
       <div>
-        <label style={labelStyle}>Risposta corretta *</label>
-        <select value={form.correct_answer} onChange={e => setField('correct_answer', e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-          <option value="">— seleziona —</option>
-          {validOptions.map((o, i) => <option key={i} value={o}>{o}</option>)}
-        </select>
-      </div>
-      <div>
         <label style={labelStyle}>Livello Bloom</label>
-        <select value={form.bloom_level} onChange={e => setField('bloom_level', e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-          <option value="">— nessuno —</option>
-          {BLOOM_LEVELS.map(l => <option key={l} value={l}>{BLOOM_LABELS[l]}</option>)}
-        </select>
+        <BloomPicker value={form.bloom_level} onChange={v => setField('bloom_level', v)} />
       </div>
-      {warning  && <div style={{ background: '#FBF2DC', border: '1px solid #D4B84A', color: '#7A5010', fontSize: 12.5, borderRadius: 8, padding: '9px 12px' }}>{warning} Premi nuovamente "Salva e aggiungi" per confermare.</div>}
+      {warning  && <div style={{ background: C.warning.bg, border: `1px solid ${C.warning.border}`, color: C.warning.text, fontSize: 12.5, borderRadius: 8, padding: '9px 12px' }}>{warning} Premi nuovamente "Salva e aggiungi" per confermare.</div>}
       {formError && <div style={{ background: C.error.bg, border: `1px solid ${C.error.border}`, color: C.error.text, fontSize: 12.5, borderRadius: 8, padding: '9px 12px' }}>{formError}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button onClick={handleSubmit} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: C.green, border: 'none', borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: saving ? 0.8 : 1 }}>
-          {saving && <span style={spinnerStyle} />}{saving ? 'Salvataggio…' : 'Salva e aggiungi'}
+          {saving && <Spinner size={12} color="#FFF" trackColor="rgba(255,255,255,0.4)" />}{saving ? 'Salvataggio…' : 'Salva e aggiungi'}
         </button>
       </div>
     </div>
@@ -512,7 +559,7 @@ function ManualTab({ allQuestions, onAdd, inputStyle, labelStyle }) {
 // Tab: Genera da documento
 // ─────────────────────────────────────────────────────────────────────────────
 
-function GenerateTab({ onAdd, inputStyle, labelStyle }) {
+function GenerateTab({ onAdd, onBusyChange, inputStyle, labelStyle }) {
   const [documents, setDocuments]           = useState([]);
   const [loadingDocs, setLoadingDocs]       = useState(true);
   const [selectedDocId, setSelectedDocId]   = useState('');
@@ -525,8 +572,12 @@ function GenerateTab({ onAdd, inputStyle, labelStyle }) {
   const [docSearch, setDocSearch]           = useState('');
   const [showDocList, setShowDocList]       = useState(false);
   const [editingGenIdx, setEditingGenIdx]   = useState(null);
-  const [editGenForm, setEditGenForm]       = useState({ content: '', options: [''], correct_answer: '', subject: '', topic: '' });
+  const [editGenForm, setEditGenForm]       = useState({ content: '', options: [''], subject: '', topic: '' });
+  const [editGenCorrectIdx, setEditGenCorrectIdx] = useState(null);
   const docSearchRef = useRef(null);
+
+  const isBusy = generating || savingGenerated;
+  useEffect(() => { onBusyChange?.(isBusy); return () => onBusyChange?.(false); }, [isBusy]);
 
   useEffect(() => {
     pb.collection('Document').getFullList({ sort: '-created', filter: `owner = "${pb.authStore.model.id}"` })
@@ -589,18 +640,32 @@ function GenerateTab({ onAdd, inputStyle, labelStyle }) {
     } catch { setGenError('Errore durante il salvataggio. Riprova.'); setSavingGenerated(false); }
   }
 
-  function openEditGen(idx) { const q = generatedQuestions[idx]; setEditingGenIdx(idx); setEditGenForm({ subject: q.subject || '', topic: q.topic || '', content: q.content, options: [...q.options], correct_answer: q.correct_answer }); }
+  function openEditGen(idx) {
+    const q = generatedQuestions[idx];
+    const options = [...q.options];
+    const initialIdx = options.findIndex(o => o === q.correct_answer);
+    setEditingGenIdx(idx);
+    setEditGenForm({ subject: q.subject || '', topic: q.topic || '', content: q.content, options });
+    setEditGenCorrectIdx(initialIdx >= 0 ? initialIdx : null);
+  }
+  function removeEditGenOption(idx) {
+    setEditGenForm(f => { const options = f.options.filter((_, i) => i !== idx); return { ...f, options: options.length ? options : [''] }; });
+    setEditGenCorrectIdx(prev => {
+      if (prev === null) return prev;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
+  }
   function confirmEditGen() {
     const opts = editGenForm.options.filter(o => o.trim() !== '');
     if (!editGenForm.content.trim() || !opts.length) return;
-    const correct_answer = opts.includes(editGenForm.correct_answer) ? editGenForm.correct_answer : opts[0];
-    setGeneratedQuestions(prev => prev.map((q, i) => i === editingGenIdx ? { ...q, ...editGenForm, options: opts, correct_answer } : q));
+    const rawCorrect = (editGenCorrectIdx !== null ? (editGenForm.options[editGenCorrectIdx] || '') : '').trim();
+    const correct_answer = opts.includes(rawCorrect) ? rawCorrect : opts[0];
+    setGeneratedQuestions(prev => prev.map((q, i) => i === editingGenIdx ? { ...q, subject: editGenForm.subject, topic: editGenForm.topic, content: editGenForm.content.trim(), options: opts, correct_answer } : q));
     setEditingGenIdx(null);
   }
   function toggleGenIdx(idx) { setSelectedGenIdx(prev => { const next = new Set(prev); next.has(idx) ? next.delete(idx) : next.add(idx); return next; }); }
-
-  const isBusy = generating || savingGenerated;
-  const spinnerStyle = { display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'spin 0.7s linear infinite' };
 
   return (
     <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -653,18 +718,26 @@ function GenerateTab({ onAdd, inputStyle, labelStyle }) {
                       </div>
                       <div><label style={labelStyle}>Testo</label><textarea value={editGenForm.content} onChange={e => setEditGenForm(f => ({ ...f, content: e.target.value }))} rows={2} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} /></div>
                       <div>
-                        <label style={labelStyle}>Opzioni</label>
+                        <label style={labelStyle}>Opzioni <span style={{ fontWeight: 400, color: C.textFaint }}>— seleziona il pallino per la corretta</span></label>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           {editGenForm.options.map((opt, oi) => (
-                            <div key={oi} style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                            <div key={oi} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <input
+                                type="radio"
+                                name={`testmodal-gen-correct-${editingGenIdx}`}
+                                checked={editGenCorrectIdx === oi}
+                                onChange={() => setEditGenCorrectIdx(oi)}
+                                disabled={!opt.trim()}
+                                title="Segna come risposta corretta"
+                                style={{ width: 14, height: 14, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
+                              />
                               <input value={opt} onChange={e => setEditGenForm(f => { const options = [...f.options]; options[oi] = e.target.value; return { ...f, options }; })} style={{ ...inputStyle, flex: 1 }} />
-                              <button onClick={() => setEditGenForm(f => { const options = f.options.filter((_, i) => i !== oi); return { ...f, options: options.length ? options : [''] }; })} style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 5, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0 }}><X size={11} /></button>
+                              <button onClick={() => removeEditGenOption(oi)} style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 5, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0 }}><X size={11} /></button>
                             </div>
                           ))}
                           <button onClick={() => setEditGenForm(f => ({ ...f, options: [...f.options, ''] }))} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: 'none', border: `1px dashed ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 11 }}><Plus size={10} /> Aggiungi</button>
                         </div>
                       </div>
-                      <div><label style={labelStyle}>Risposta corretta</label><select value={editGenForm.correct_answer} onChange={e => setEditGenForm(f => ({ ...f, correct_answer: e.target.value }))} style={{ ...inputStyle, cursor: 'pointer' }}>{editGenForm.options.filter(o => o.trim()).map((o, i) => <option key={i} value={o}>{o}</option>)}</select></div>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                         <button onClick={() => setEditingGenIdx(null)} style={{ padding: '4px 12px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 12 }}>Annulla</button>
                         <button onClick={confirmEditGen} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', background: C.green, border: 'none', borderRadius: 6, cursor: 'pointer', color: '#FFF', fontFamily: font, fontSize: 12, fontWeight: 500 }}><Check size={11} /> Conferma</button>
@@ -692,11 +765,11 @@ function GenerateTab({ onAdd, inputStyle, labelStyle }) {
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           {generatedQuestions.length === 0 ? (
             <button onClick={handleGenerate} disabled={isBusy || !selectedDocId} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: C.green, border: 'none', borderRadius: 8, cursor: (isBusy || !selectedDocId) ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: (isBusy || !selectedDocId) ? 0.7 : 1 }}>
-              {generating && <span style={spinnerStyle} />}{generating ? 'Generazione…' : 'Genera'}
+              {generating && <Spinner size={12} color="#FFF" trackColor="rgba(255,255,255,0.4)" />}{generating ? 'Generazione…' : 'Genera'}
             </button>
           ) : (
             <button onClick={handleSaveGenerated} disabled={savingGenerated || !selectedGenIdx.size} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: C.green, border: 'none', borderRadius: 8, cursor: (savingGenerated || !selectedGenIdx.size) ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: (savingGenerated || !selectedGenIdx.size) ? 0.7 : 1 }}>
-              {savingGenerated && <span style={spinnerStyle} />}{savingGenerated ? 'Salvataggio…' : `Aggiungi ${selectedGenIdx.size} domanda/e`}
+              {savingGenerated && <Spinner size={12} color="#FFF" trackColor="rgba(255,255,255,0.4)" />}{savingGenerated ? 'Salvataggio…' : `Aggiungi ${selectedGenIdx.size} domanda/e`}
             </button>
           )}
         </div>
@@ -748,25 +821,20 @@ function MineTab({ allQuestions, loadingAll, existingIds, emptyMessage, onAdd })
     if (selected.length) onAdd(selected);
   }
 
-  const selectStyle = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 10px', fontSize: 12.5, color: C.text, fontFamily: font, outline: 'none', cursor: 'pointer', flex: 1 };
 
   return (
     <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <select value={subjectFilter} onChange={e => { setSubjectFilter(e.target.value); setTopicFilter(''); }} style={selectStyle}>
-          <option value="">Tutte le materie</option>
-          {subjectOptions.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={topicFilter} onChange={e => setTopicFilter(e.target.value)} disabled={!subjectFilter} style={{ ...selectStyle, opacity: subjectFilter ? 1 : 0.45, cursor: subjectFilter ? 'pointer' : 'not-allowed' }}>
-          <option value="">Tutti gli argomenti</option>
-          {topicOptions.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <ChipSelect options={subjectOptions} value={subjectFilter} onChange={v => { setSubjectFilter(v); setTopicFilter(''); }} allLabel="Tutte le materie" />
+        {subjectFilter && topicOptions.length > 0 && (
+          <ChipSelect options={topicOptions} value={topicFilter} onChange={setTopicFilter} allLabel="Tutti gli argomenti" />
+        )}
       </div>
       <div style={{ position: 'relative' }}>
         <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: C.textFaint }} />
         <input value={qFilter} onChange={e => setQFilter(e.target.value)} placeholder="Cerca…"
           style={{ width: '100%', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '7px 12px 7px 28px', fontSize: 12.5, color: C.text, fontFamily: font, outline: 'none', boxSizing: 'border-box' }}
-          onFocus={e => e.target.style.borderColor = '#5C7A5E'} onBlur={e => e.target.style.borderColor = C.border}
+          onFocus={e => e.target.style.borderColor = C.focusBorder} onBlur={e => e.target.style.borderColor = C.border}
         />
       </div>
       {selectedIds.size > 0 && <div style={{ fontSize: 12, color: C.greenLight, fontWeight: 500 }}>{selectedIds.size} {selectedIds.size === 1 ? 'domanda selezionata' : 'domande selezionate'}</div>}

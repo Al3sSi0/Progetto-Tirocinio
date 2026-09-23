@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
-import { C, font } from '../styles/theme';
+import { C, font, serif } from '../styles/theme';
 
 const TABS = ['Domande', 'Documenti', 'Test'];
 
@@ -47,7 +47,7 @@ export default function InfoModal({ onClose }) {
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}
+      style={{ position: 'fixed', inset: 0, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}
       onClick={onClose}
     >
       <div
@@ -56,7 +56,7 @@ export default function InfoModal({ onClose }) {
       >
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px 16px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: C.text }}>Come funziona il portale</h2>
+          <h2 style={{ margin: 0, fontFamily: serif, fontSize: 17, fontWeight: 500, color: C.text }}>Come funziona il portale</h2>
           <button
             onClick={onClose}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', padding: 4, borderRadius: 6 }}

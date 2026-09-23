@@ -1,17 +1,27 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, FileText, ClipboardList, LogOut, Search, ChevronRight, Trash2, Plus, MoreVertical, Pencil, Download, HelpCircle } from 'lucide-react';
+import { BookOpen, FileText, ClipboardList, LogOut, Search, ChevronRight, Trash2, Plus, MoreVertical, Pencil, Download, HelpCircle, ClipboardX } from 'lucide-react';
 import pb from '../../lib/pocketbase';
 import { C, font, serif, BLOOM_STYLES, BLOOM_LABELS } from '../../styles/theme';
 import ExportTestModal from './ExportTestModal';
-import InfoModal from '../InfoModal';
+import Navbar from '../common/Navbar';
+import Spinner from '../common/Spinner';
+import EmptyState from '../common/EmptyState';
+import ConfirmModal from '../common/ConfirmModal';
 
 // ── Badge livello Bloom ───────────────────────────────────────────────────────
 function BloomBadge({ level }) {
-  const style = BLOOM_STYLES[level] || { background: C.headerBg, color: C.textMuted };
+  const style = BLOOM_STYLES[level];
+  if (!style) {
+    return (
+      <span style={{ ...C.bloomNeutral, display: 'inline-block', padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 500, fontStyle: 'italic', whiteSpace: 'nowrap', border: `1px dashed ${C.border}` }}>
+        Non classificato
+      </span>
+    );
+  }
   return (
     <span style={{ ...style, display: 'inline-block', padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>
-      {BLOOM_LABELS[level] || level || '—'}
+      {BLOOM_LABELS[level] || level}
     </span>
   );
 }
@@ -55,11 +65,9 @@ export default function TestsPage() {
   const [editTest, setEditTest]                 = useState(null);
   const [openMenuId, setOpenMenuId]             = useState(null);
   const [exportTest, setExportTest]             = useState(null);
-  const [showInfo, setShowInfo]                 = useState(false);
 
   const navigate = useNavigate();
   const location = useLocation();
-  const user = pb.authStore.model;
 
   async function loadTests() {
     setLoading(true); setError('');
@@ -102,6 +110,9 @@ export default function TestsPage() {
   useEffect(() => {
     if (location.state?.preselectedQuestions?.length) {
       setPreselectedQuestions(location.state.preselectedQuestions);
+      setShowAddModal(true);
+      window.history.replaceState({}, '');
+    } else if (location.state?.openCreate) {
       setShowAddModal(true);
       window.history.replaceState({}, '');
     }
@@ -150,7 +161,6 @@ export default function TestsPage() {
   function toggleTest(id) {
     setExpandedTests(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   }
-  function handleLogout() { pb.authStore.clear(); navigate('/login'); }
 
   const navTabStyle = (path) => ({
     display: 'flex', alignItems: 'center', gap: 6,
@@ -168,54 +178,13 @@ export default function TestsPage() {
         @import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap');
         @keyframes spin { to { transform: rotate(360deg); } }
         .tbl-row { cursor: pointer; transition: background 0.1s; }
-        .tbl-row:hover > td { background: #EDE8DC !important; }
-        .tbl-row-t:hover > td { background: #EDE8DC !important; }
+        .tbl-row:hover > td { background: ${C.treeLevels[3]} !important; }
+        .tbl-row-t:hover > td { background: ${C.treeLevels[3]} !important; }
       `}</style>
 
       <div style={{ minHeight: '100vh', background: C.bg, fontFamily: font }}>
 
-        {/* ── Topbar ── */}
-        <header style={{ position: 'sticky', top: 0, zIndex: 10, background: C.surface, borderBottom: `1px solid ${C.border}`, height: 56, padding: '0 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 30, height: 30, background: C.green, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <BookOpen size={14} color="#A8C5A0" />
-            </div>
-            <span style={{ fontFamily: serif, fontSize: 16, color: C.text, fontWeight: 500 }}>Portale Docenti</span>
-          </div>
-
-          {/* Nav tabs */}
-          <nav style={{ display: 'flex', gap: 4 }}>
-            <button onClick={() => navigate('/')} style={navTabStyle('/')}>
-              <BookOpen size={13} /> Domande
-            </button>
-            <button onClick={() => navigate('/documents')} style={navTabStyle('/documents')}>
-              <FileText size={13} /> Documenti
-            </button>
-            <button onClick={() => navigate('/tests')} style={navTabStyle('/tests')}>
-              <ClipboardList size={13} /> Test
-            </button>
-          </nav>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button
-              onClick={() => setShowInfo(true)}
-              style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 6, color: C.textMuted, cursor: 'pointer', padding: '6px 10px', display: 'flex', alignItems: 'center' }}
-              onMouseEnter={e => e.currentTarget.style.color = C.text}
-              onMouseLeave={e => e.currentTarget.style.color = C.textMuted}
-              title="Guida"
-            >
-              <HelpCircle size={14} />
-            </button>
-            <span style={{ fontSize: 12, color: C.textMuted }}>{user?.email}</span>
-            <button onClick={handleLogout}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textMuted, background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontFamily: font }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = '#B05A3A'; e.currentTarget.style.color = '#B05A3A'; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textMuted; }}
-            >
-              <LogOut size={13} /> Logout
-            </button>
-          </div>
-        </header>
+        <Navbar />
 
         {/* ── Main ── */}
         <main style={{ padding: '2rem 1.5rem', maxWidth: 1200, margin: '0 auto' }}>
@@ -281,20 +250,25 @@ export default function TestsPage() {
                   {loading ? (
                     <tr>
                       <td colSpan={3} style={{ padding: '3rem', textAlign: 'center', color: C.textFaint }}>
-                        <span style={{ display: 'inline-block', width: 16, height: 16, border: `2px solid ${C.border}`, borderTopColor: '#5C7A5E', borderRadius: '50%', animation: 'spin 0.7s linear infinite', marginRight: 8, verticalAlign: 'middle' }} />
+                        <Spinner size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
                         Caricamento…
                       </td>
                     </tr>
                   ) : groupedData.length === 0 ? (
                     <tr>
-                      <td colSpan={3} style={{ padding: '3rem', textAlign: 'center', color: C.textFaint, fontSize: 13 }}>
-                        Nessun test trovato.
+                      <td colSpan={3}>
+                        <EmptyState
+                          icon={ClipboardX}
+                          message={globalFilter ? `Nessun risultato per «${globalFilter}».` : 'Nessun test ancora.'}
+                          actionLabel={!globalFilter ? '+ Crea test' : undefined}
+                          onAction={() => setShowAddModal(true)}
+                        />
                       </td>
                     </tr>
                   ) : (
                     groupedData.flatMap(({ subject, topics }, gi) => {
                       const isSubjectExpanded = expandedSubjects.has(subject);
-                      const groupBg = gi % 2 === 0 ? 'transparent' : '#FAF7F2';
+                      const groupBg = gi % 2 === 0 ? 'transparent' : C.treeLevels[0];
 
                       const allSubjectTests = topics.flatMap(t => t.tests);
                       const selectedInSubject = allSubjectTests.filter(t => selectedIds.has(t.id)).length;
@@ -331,7 +305,7 @@ export default function TestsPage() {
                       const topicRows = topics.flatMap(({ topic, tests }) => {
                         const topicKey = `${subject}::${topic}`;
                         const isTopicExpanded = expandedTopics.has(topicKey);
-                        const topicBg = '#F5F2EB';
+                        const topicBg = C.treeLevels[1];
                         const selectedInTopic = tests.filter(t => selectedIds.has(t.id)).length;
 
                         const topicRow = (
@@ -364,7 +338,7 @@ export default function TestsPage() {
 
                         // ── Livello 3 + 4: righe test ed espansione domande ──
                         const testRows = tests.flatMap(test => {
-                          const testBg = '#F3EFE8';
+                          const testBg = C.treeLevels[2];
                           const isTestExpanded = expandedTests.has(test.id);
                           // Le domande arrivano via expand; fallback ad array vuoto
                           const expandedQs = test.expand?.questions
@@ -444,14 +418,12 @@ export default function TestsPage() {
                           if (!isTestExpanded) return [testRow];
 
                           // ── Livello 4: dettaglio domande ──
-                          const detailBg = '#EDE8DC';
+                          const detailBg = C.treeLevels[3];
                           const detailRow = (
                             <tr key={`detail-${test.id}`}>
                               <td colSpan={3} style={{ padding: 0, background: detailBg, borderBottom: `1px solid ${C.border}` }}>
                                 {expandedQs.length === 0 ? (
-                                  <div style={{ padding: '16px 24px 16px 64px', fontSize: 13, color: C.textFaint, fontStyle: 'italic' }}>
-                                    Nessuna domanda associata a questo test.
-                                  </div>
+                                  <EmptyState icon={ClipboardX} message="Nessuna domanda associata a questo test." />
                                 ) : (
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                                     {expandedQs.map((q, qi) => {
@@ -481,7 +453,7 @@ export default function TestsPage() {
                                           )}
                                           {/* Footer: bloom + materia/argomento */}
                                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 30 }}>
-                                            {q.bloom_level && <BloomBadge level={q.bloom_level} />}
+                                            <BloomBadge level={q.bloom_level} />
                                             {(q.subject || q.topic) && (
                                               <span style={{ fontSize: 11, color: C.textFaint }}>
                                                 {[q.subject, q.topic].filter(Boolean).join(' · ')}
@@ -541,37 +513,17 @@ export default function TestsPage() {
       )}
 
       {/* ── Modale di conferma eliminazione ── */}
-      {showInfo && <InfoModal onClose={() => setShowInfo(false)} />}
 
       {showDeleteModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(28,43,29,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
-          onClick={() => { if (!deleting) setShowDeleteModal(false); }}
-        >
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: '28px 32px', maxWidth: 420, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.12)', fontFamily: font }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-              <div style={{ width: 36, height: 36, background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Trash2 size={16} color={C.error.text} />
-              </div>
-              <h2 style={{ fontFamily: serif, fontSize: 17, fontWeight: 500, color: C.text, margin: 0 }}>Elimina test</h2>
-            </div>
-            <p style={{ fontSize: 14, color: C.textBody, lineHeight: 1.6, margin: '0 0 24px' }}>
-              Stai per eliminare <strong>{selectedIds.size} {selectedIds.size === 1 ? 'test' : 'test'}</strong>. Questa azione è irreversibile.
-            </p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowDeleteModal(false)} disabled={deleting}
-                style={{ padding: '8px 18px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: deleting ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, opacity: deleting ? 0.5 : 1 }}>
-                Annulla
-              </button>
-              <button onClick={deleteSelected} disabled={deleting}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.error.text, border: 'none', borderRadius: 8, cursor: deleting ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: deleting ? 0.8 : 1 }}>
-                {deleting && <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FFF', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />}
-                {deleting ? 'Eliminazione…' : 'Elimina'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmModal
+          icon={Trash2}
+          title="Elimina test"
+          message={<>Stai per eliminare <strong>{selectedIds.size} {selectedIds.size === 1 ? 'test' : 'test'}</strong>. Questa azione è irreversibile.</>}
+          confirmLabel="Elimina"
+          loading={deleting}
+          onConfirm={deleteSelected}
+          onCancel={() => setShowDeleteModal(false)}
+        />
       )}
     </>
   );

@@ -1,11 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, X, Pencil, Check, Search } from 'lucide-react';
 import pb from '../../lib/pocketbase';
-import { C, font, serif, BLOOM_LEVELS, BLOOM_LABELS } from '../../styles/theme';
+import { generateQuestionsFromText, runGeneration, mergeQuestions, saveGeneratedQuestions, MAX_GENERATED_QUESTIONS } from '../../lib/generateQuestions';
+import { ProgressBar, GenerationNotice, GeneratedListHeader, DuplicatesNotice, DuplicateBadge } from '../common/GenerationUI';
+import { detectDuplicates } from '../../lib/duplicates';
+import GenerationPlanHint from '../common/GenerationPlanHint';
+import { C, font, serif, inputStyle, labelStyle, BLOOM_LEVELS, BLOOM_LABELS } from '../../styles/theme';
 import SuggestInput from './SuggestInput';
 import { useAllSuggestions } from '../../lib/useAllSuggestions';
 import BloomPicker from '../common/BloomPicker';
 import ChipSelect from '../common/ChipSelect';
+import { useEscape } from '../../lib/useEscape';
 
 const initialForm = {
   subject:        '',
@@ -16,26 +21,7 @@ const initialForm = {
 };
 
 
-function parseGeneratedQuestions(rawText) {
-  const questions = [];
-  const blocks = rawText.trim().split(/\n(?=> )/);
-  for (const block of blocks) {
-    try {
-      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-      if (lines.length < 6) continue;
-      const content = lines[0].replace(/^> /, '').trim();
-      if (!content) continue;
-      const opts = [1, 2, 3, 4].map(i => lines[i].replace(/^[a-d]\) /, ''));
-      const ansMatch = block.match(/\* Correct Answer:\s*([a-d])\)?/i);
-      const ansLetter = ansMatch ? ansMatch[1].toLowerCase() : 'a';
-      const correct_answer = opts[['a', 'b', 'c', 'd'].indexOf(ansLetter)] || opts[0];
-      questions.push({ content, options: opts, correct_answer });
-    } catch { continue; }
-  }
-  return questions;
-}
-
-export default function AddQuestionModal({ onClose, onSaved, data }) {
+export default function AddQuestionModal({ onClose, onSaved, data, initialMode = 'manual', initialDocId = '' }) {
   // --- Manual form state ---
   const [form, setForm] = useState(initialForm);
   const [correctIdx, setCorrectIdx] = useState(null);
@@ -51,14 +37,19 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
   const scrollBodyRef   = useRef(null);
 
   // --- Mode ---
-  const [mode, setMode] = useState('manual'); // 'manual' | 'generate'
+  const [mode, setMode] = useState(initialMode); // 'manual' | 'generate'
 
   // --- Generate mode state ---
   const [documents, setDocuments] = useState([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
-  const [selectedDocId, setSelectedDocId] = useState('');
+  const [selectedDocId, setSelectedDocId] = useState(initialDocId);
   const [numQuestions, setNumQuestions] = useState(1);
   const [generating, setGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState(null); // { done, total } durante la generazione a blocchi
+  const [failedRequests, setFailedRequests] = useState([]); // parti del documento da riprovare
+  const [genInfo, setGenInfo] = useState({ requested: 0, capped: false });
+  const [retrying, setRetrying] = useState(false);
+  const [saveProgress, setSaveProgress] = useState(null); // { done, total } durante il salvataggio a lotti
   const [generatedQuestions, setGeneratedQuestions] = useState([]);
   const [selectedGenIdx, setSelectedGenIdx] = useState(new Set());
   const [genError, setGenError] = useState('');
@@ -173,63 +164,57 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
     setGenError('');
     setGeneratedQuestions([]);
     setSelectedGenIdx(new Set());
+    setFailedRequests([]);
+    setGenInfo({ requested: 0, capped: false });
 
     try {
       const docText = (doc.text || '').trim();
+      const { questions, failedRequests: failed, requested, capped } = await generateQuestionsFromText(
+        docText, numQuestions, import.meta.env.VITE_OPENROUTER_API_KEY,
+        (done, total) => setGenProgress({ done, total }),
+      );
 
-      const prompt = `Crea un quiz di livello scuola superiore basato sul testo fornito.
-    Genera esattamente ${numQuestions} domande in lingua ITALIANA.
-    Rispetta rigorosamente questo formato per ogni domanda:
-
-    > [Testo della domanda]
-    a) [Opzione A]
-    b) [Opzione B]
-    c) [Opzione C]
-    d) [Opzione D]
-    * Correct Answer: [Lettera, esempio: a)]
-
-    Testo: ${docText.slice(0, 4000)}`;
-
-      const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'meta-llama/llama-3.1-8b-instruct',
-          messages: [
-            { role: 'system', content: 'Sei un esperto nella creazione di quiz educativi.' },
-            { role: 'user', content: prompt },
-          ],
-          temperature: 0.5,
-        }),
-      });
-
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`API error ${response.status}: ${err}`);
-      }
-
-      const json = await response.json();
-      const rawText = json.choices?.[0]?.message?.content || '';
-      const parsed = parseGeneratedQuestions(rawText);
-
-      if (parsed.length === 0) {
+      if (questions.length === 0) {
         setGenError('Nessuna domanda riconosciuta nella risposta. Riprova.');
       } else {
         const docSubject = doc?.subject?.trim() || '';
         const docTopic   = doc?.topic?.trim()   || '';
-        const withMeta   = parsed.map(q => ({ ...q, subject: docSubject, topic: docTopic }));
+        const withMeta   = questions.map(q => ({ ...q, subject: docSubject, topic: docTopic }));
         setGeneratedQuestions(withMeta);
-        // Pre-select all
-        setSelectedGenIdx(new Set(withMeta.map((_, i) => i)));
+        // Pre-seleziona tutte tranne quelle che sembrano già nell'archivio
+        const flags = detectDuplicates(withMeta, { archive: data });
+        setSelectedGenIdx(new Set(withMeta.map((_, i) => i).filter(i => !flags[i])));
       }
+      setFailedRequests(failed);
+      setGenInfo({ requested, capped, asked: numQuestions });
     } catch (err) {
       setGenError('Generazione fallita: ' + err.message);
     } finally {
       setGenerating(false);
+      setGenProgress(null);
+    }
+  }
+
+  // Riprova solo le parti del documento che non hanno avuto risposta; le nuove domande si aggiungono (già selezionate).
+  async function handleRetryFailed() {
+    const doc = documents.find(d => d.id === selectedDocId);
+    setRetrying(true); setGenError('');
+    try {
+      const { questions, failedRequests: stillFailed } = await runGeneration(
+        failedRequests, import.meta.env.VITE_OPENROUTER_API_KEY, (done, total) => setGenProgress({ done, total }),
+      );
+      const withMeta = questions.map(q => ({ ...q, subject: doc?.subject?.trim() || '', topic: doc?.topic?.trim() || '' }));
+      const prevSelected = new Set([...selectedGenIdx].map(i => generatedQuestions[i]));
+      const merged = mergeQuestions(generatedQuestions, withMeta);
+      const flags = detectDuplicates(merged, { archive: data });
+      setGeneratedQuestions(merged);
+      setSelectedGenIdx(new Set(merged.map((q, i) => (prevSelected.has(q) || (!generatedQuestions.includes(q) && !flags[i])) ? i : -1).filter(i => i >= 0)));
+      setFailedRequests(stillFailed);
+    } catch (err) {
+      setGenError('Nuovo tentativo fallito: ' + err.message);
+    } finally {
+      setRetrying(false);
+      setGenProgress(null);
     }
   }
 
@@ -276,41 +261,26 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
   async function handleSaveGenerated() {
     if (selectedGenIdx.size === 0) { setGenError('Seleziona almeno una domanda.'); return; }
 
-    const selected = [...selectedGenIdx].sort().map(i => generatedQuestions[i]);
+    const selected = [...selectedGenIdx].sort((a, b) => a - b).map(i => generatedQuestions[i]);
 
-    // Save all selected directly
     setSavingGenerated(true);
     setGenError('');
     try {
-      await Promise.all(selected.map(q =>
-        pb.collection('Question').create({
-          subject:        q.subject || '',
-          topic:          q.topic   || '',
-          content:        q.content,
-          options:        q.options,
-          correct_answer: q.correct_answer,
-          bloom_level:    '',
-          source_doc:     selectedDocId,
-          owner:          pb.authStore.model.id,
-        })
-      ));
+      await saveGeneratedQuestions(pb, selected, (done, total) => setSaveProgress({ done, total }));
       onSaved();
     } catch {
       setGenError('Errore durante il salvataggio. Riprova.');
       setSavingGenerated(false);
+      setSaveProgress(null);
     }
   }
 
-  const isBusy = saving || generating || savingGenerated;
+  const isBusy = saving || generating || savingGenerated || retrying;
+  const dups = useMemo(() => detectDuplicates(generatedQuestions, { archive: data }), [generatedQuestions, data]);
+  useEscape(onClose, isBusy);
 
-  const inputStyle = {
-    width: '100%', background: C.surface, border: `1px solid ${C.border}`,
-    borderRadius: 8, padding: '8px 12px', fontSize: 13, color: C.text,
-    fontFamily: font, outline: 'none', boxSizing: 'border-box',
-  };
-  const labelStyle = { display: 'block', fontSize: 12, fontWeight: 500, color: C.textMuted, marginBottom: 4 };
   const tabStyle = (active) => ({
-    padding: '6px 14px', fontSize: 13, fontFamily: font, borderRadius: 8,
+    padding: '8px 16px', fontSize: 14, fontFamily: font, borderRadius: 9,
     cursor: 'pointer', fontWeight: active ? 500 : 400,
     background: active ? C.green : 'transparent',
     color: active ? '#FFF' : C.textMuted,
@@ -323,7 +293,7 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
   };
 
   const fieldErrorStyle = {
-    fontSize: 12, color: C.error.text, background: C.error.bg,
+    fontSize: 13, color: C.error.text, background: C.error.bg,
     border: `1px solid ${C.error.border}`, borderRadius: 6,
     padding: '5px 10px', marginBottom: 6, animation: 'errorSlideIn 0.25s ease',
   };
@@ -341,16 +311,16 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
       onClick={() => { if (!isBusy) onClose(); }}
     >
       <div
-        style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: `min(600px, 90vw)`, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.14)', fontFamily: font }}
+        style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: `min(760px, 92vw)`, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.14)', fontFamily: font }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div style={{ padding: '18px 24px', borderBottom: `1px solid ${C.borderLight}` }}>
+        <div style={{ padding: '22px 32px', borderBottom: `1px solid ${C.borderLight}` }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <h2 style={{ fontFamily: serif, fontSize: 17, fontWeight: 500, color: C.text, margin: 0 }}>Nuova domanda</h2>
+            <h2 style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: C.text, margin: 0 }}>Nuova domanda</h2>
             <button onClick={onClose} disabled={isBusy}
-              style={{ background: 'none', border: 'none', cursor: isBusy ? 'not-allowed' : 'pointer', color: C.textMuted, padding: 4, display: 'flex', opacity: isBusy ? 0.4 : 1 }}>
-              <X size={16} />
+              style={{ background: 'none', border: 'none', cursor: isBusy ? 'not-allowed' : 'pointer', color: C.textMuted, padding: 4, display: 'flex', opacity: isBusy ? 0.4 : 1 }} aria-label="Chiudi">
+              <X size={18} />
             </button>
           </div>
           {/* Mode tabs */}
@@ -365,7 +335,7 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
         </div>
 
         {/* Body */}
-        <div ref={scrollBodyRef} style={{ overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div ref={scrollBodyRef} style={{ overflowY: 'auto', padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
 
           {/* ── MANUAL MODE ── */}
           {mode === 'manual' && (<>
@@ -397,17 +367,17 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                       onChange={() => setCorrectIdx(idx)}
                       disabled={!opt.trim()}
                       title="Segna come risposta corretta"
-                      style={{ width: 15, height: 15, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
+                      style={{ width: 17, height: 17, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
                     />
                     <input value={opt} onChange={e => setOption(idx, e.target.value)} placeholder={`Opzione ${idx + 1}`} style={{ ...inputStyle, flex: 1 }} />
                     <button onClick={() => removeOption(idx)}
-                      style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, flexShrink: 0 }}>
+                      style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, flexShrink: 0 }} aria-label="Rimuovi opzione">
                       <X size={13} />
                     </button>
                   </div>
                 ))}
                 <button onClick={addOption}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'none', border: `1px dashed ${C.border}`, borderRadius: 8, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 12, marginTop: 2 }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', background: 'none', border: `1px dashed ${C.border}`, borderRadius: 9, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, marginTop: 2 }}>
                   <Plus size={12} /> Aggiungi opzione
                 </button>
               </div>
@@ -471,7 +441,7 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                 if (docTopicFilter)   filtered = filtered.filter(d => (d.topic   || '').trim() === docTopicFilter);
                 if (docSearch.trim()) filtered = filtered.filter(d => (d.title || d.file || '').toLowerCase().includes(docSearch.trim().toLowerCase()));
                 return (
-                  <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden', maxHeight: 200, overflowY: 'auto' }}>
+                  <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden', maxHeight: 280, overflowY: 'auto' }}>
                     {filtered.length === 0 ? (
                       <div style={{ padding: 12, textAlign: 'center', color: C.textFaint, fontSize: 13 }}>Nessun documento trovato.</div>
                     ) : filtered.map((doc, i) => {
@@ -481,7 +451,7 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                         <div key={doc.id}
                           onClick={() => { if (!generating) { setSelectedDocId(doc.id); setGeneratedQuestions([]); setSelectedGenIdx(new Set()); setGenError(''); } }}
                           style={{
-                            padding: '9px 12px', fontSize: 13, cursor: generating ? 'default' : 'pointer',
+                            padding: '11px 14px', fontSize: 14, cursor: generating ? 'default' : 'pointer',
                             borderBottom: i < filtered.length - 1 ? `1px solid ${C.borderLight}` : 'none',
                             background: isActive ? C.expandBg : C.surface,
                             color: isActive ? C.green : C.text,
@@ -492,7 +462,7 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                         >
                           <div>{label}</div>
                           {(doc.subject || doc.topic) && (
-                            <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>
+                            <div style={{ fontSize: 12.5, color: C.textFaint, marginTop: 2 }}>
                               {[doc.subject, doc.topic].filter(Boolean).join(' · ')}
                             </div>
                           )}
@@ -506,10 +476,10 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
               <div>
                 <label style={labelStyle}>Numero di domande</label>
                 <input
-                  type="number" min={1} max={5}
+                  type="number" min={1} max={MAX_GENERATED_QUESTIONS}
                   value={numQuestions}
                   onChange={e => {
-                    const v = Math.max(1, Math.min(5, parseInt(e.target.value) || 1));
+                    const v = Math.max(1, Math.min(MAX_GENERATED_QUESTIONS, parseInt(e.target.value) || 1));
                     setNumQuestions(v);
                     setGeneratedQuestions([]);
                     setSelectedGenIdx(new Set());
@@ -517,14 +487,27 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                   style={{ ...inputStyle, width: 80 }}
                   disabled={generating}
                 />
+                <GenerationPlanHint doc={documents.find(d => d.id === selectedDocId)} numQuestions={numQuestions} />
               </div>
+
+              {genProgress && genProgress.total > 1 && (
+                <ProgressBar done={genProgress.done} total={genProgress.total} label={retrying ? 'Nuovo tentativo sulle parti mancanti' : 'Lettura del documento, parte per parte'} />
+              )}
+              {!generating && generatedQuestions.length > 0 && (
+                <GenerationNotice failedCount={failedRequests.length} requested={genInfo.requested} capped={genInfo.capped} asked={genInfo.asked} got={generatedQuestions.length} onRetry={handleRetryFailed} retrying={retrying} />
+              )}
 
               {/* Generated question cards */}
               {generatedQuestions.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, color: C.textMuted }}>
-                    {generatedQuestions.length} domanda/e generata/e — seleziona quelle da salvare:
-                  </div>
+                  <DuplicatesNotice count={dups.filter(Boolean).length} />
+                  <GeneratedListHeader
+                    total={generatedQuestions.length}
+                    selected={selectedGenIdx.size}
+                    onSelectAll={() => setSelectedGenIdx(new Set(generatedQuestions.map((_, i) => i)))}
+                    onSelectNone={() => setSelectedGenIdx(new Set())}
+                    disabled={isBusy}
+                  />
                   {generatedQuestions.map((q, idx) => {
                     const selected = selectedGenIdx.has(idx);
                     const isEditing = editingGenIdx === idx;
@@ -583,7 +566,7 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                                       onChange={() => setEditGenCorrectIdx(oi)}
                                       disabled={!opt.trim()}
                                       title="Segna come risposta corretta"
-                                      style={{ width: 14, height: 14, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
+                                      style={{ width: 16, height: 16, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
                                     />
                                     <input
                                       value={opt}
@@ -593,14 +576,14 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                                     <button
                                       onClick={() => removeEditGenOption(oi)}
                                       style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, flexShrink: 0 }}
-                                    >
+                                     aria-label="Rimuovi opzione">
                                       <X size={12} />
                                     </button>
                                   </div>
                                 ))}
                                 <button
                                   onClick={() => setEditGenForm(f => ({ ...f, options: [...f.options, ''] }))}
-                                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', background: 'none', border: `1px dashed ${C.border}`, borderRadius: 7, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 12 }}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', background: 'none', border: `1px dashed ${C.border}`, borderRadius: 7, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13 }}
                                 >
                                   <Plus size={11} /> Aggiungi opzione
                                 </button>
@@ -609,13 +592,13 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                               <button
                                 onClick={() => setEditingGenIdx(null)}
-                                style={{ padding: '5px 14px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 7, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 12 }}
+                                style={{ padding: '5px 14px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 7, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13 }}
                               >
                                 Annulla
                               </button>
                               <button
                                 onClick={confirmEditGen}
-                                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 14px', background: C.green, border: 'none', borderRadius: 7, cursor: 'pointer', color: '#FFF', fontFamily: font, fontSize: 12, fontWeight: 500 }}
+                                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 14px', background: C.green, border: 'none', borderRadius: 7, cursor: 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500 }}
                               >
                                 <Check size={12} /> Conferma
                               </button>
@@ -635,17 +618,17 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                             />
                             <div style={{ flex: 1 }}>
                               {(q.subject || q.topic) && (
-                                <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 5 }}>
+                                <div style={{ fontSize: 12.5, color: C.textFaint, marginBottom: 5 }}>
                                   {[q.subject, q.topic].filter(Boolean).join(' · ')}
                                 </div>
                               )}
-                              <div style={{ fontSize: 13, color: C.text, fontWeight: 500, marginBottom: 6, lineHeight: 1.5 }}>
+                              <div style={{ fontSize: 14, color: C.text, fontWeight: 500, marginBottom: 6, lineHeight: 1.5 }}>
                                 {q.content}
                               </div>
                               <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
                                 {q.options.map((opt, oi) => (
                                   <li key={oi} style={{
-                                    fontSize: 12,
+                                    fontSize: 13,
                                     color: opt === q.correct_answer ? C.greenLight : C.textBody,
                                     fontWeight: opt === q.correct_answer ? 600 : 400,
                                   }}>
@@ -653,12 +636,13 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
                                   </li>
                                 ))}
                               </ul>
+                              <DuplicateBadge dup={dups[idx]} />
                             </div>
                             <button
                               onClick={e => { e.stopPropagation(); openEditGen(idx); }}
                               title="Modifica"
                               style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, flexShrink: 0 }}
-                            >
+                             aria-label="Modifica">
                               <Pencil size={12} />
                             </button>
                           </div>
@@ -679,15 +663,15 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
         </div>
 
         {/* Footer */}
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '16px 24px', borderTop: `1px solid ${C.borderLight}` }}>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '20px 32px', borderTop: `1px solid ${C.borderLight}` }}>
           <button onClick={onClose} disabled={isBusy}
-            style={{ padding: '8px 18px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: isBusy ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, opacity: isBusy ? 0.5 : 1 }}>
+            style={{ padding: '11px 22px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: isBusy ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 14, opacity: isBusy ? 0.5 : 1 }}>
             Annulla
           </button>
 
           {mode === 'manual' && (
             <button onClick={handleSubmit} disabled={saving}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.green, border: 'none', borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: saving ? 0.8 : 1 }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '11px 22px', background: C.green, border: 'none', borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 14, fontWeight: 500, opacity: saving ? 0.8 : 1 }}>
               {saving && <span style={spinnerStyle} />}
               {saving ? 'Salvataggio…' : 'Salva'}
             </button>
@@ -696,15 +680,15 @@ export default function AddQuestionModal({ onClose, onSaved, data }) {
           {mode === 'generate' && !loadingDocs && documents.length > 0 && (
             generatedQuestions.length === 0 ? (
               <button onClick={handleGenerate} disabled={generating || !selectedDocId}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.green, border: 'none', borderRadius: 8, cursor: (generating || !selectedDocId) ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: (generating || !selectedDocId) ? 0.8 : 1 }}>
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '11px 22px', background: C.green, border: 'none', borderRadius: 8, cursor: (generating || !selectedDocId) ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 14, fontWeight: 500, opacity: (generating || !selectedDocId) ? 0.8 : 1 }}>
                 {generating && <span style={spinnerStyle} />}
-                {generating ? 'Generazione in corso…' : 'Genera'}
+                {generating ? `Generazione in corso…${genProgress?.total > 1 ? ` ${genProgress.done}/${genProgress.total}` : ''}` : 'Genera'}
               </button>
             ) : (
-              <button onClick={handleSaveGenerated} disabled={savingGenerated || selectedGenIdx.size === 0}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.green, border: 'none', borderRadius: 8, cursor: (savingGenerated || selectedGenIdx.size === 0) ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: (savingGenerated || selectedGenIdx.size === 0) ? 0.8 : 1 }}>
+              <button onClick={handleSaveGenerated} disabled={isBusy || selectedGenIdx.size === 0}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '11px 22px', background: C.green, border: 'none', borderRadius: 8, cursor: (savingGenerated || selectedGenIdx.size === 0) ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 14, fontWeight: 500, opacity: (savingGenerated || selectedGenIdx.size === 0) ? 0.8 : 1 }}>
                 {savingGenerated && <span style={spinnerStyle} />}
-                {savingGenerated ? 'Salvataggio…' : selectedGenIdx.size === 1 ? 'Salva domanda' : `Salva ${selectedGenIdx.size} domande`}
+                {savingGenerated ? `Salvataggio…${saveProgress?.total > 20 ? ` ${saveProgress.done}/${saveProgress.total}` : ''}` : selectedGenIdx.size === 1 ? 'Salva domanda' : `Salva ${selectedGenIdx.size} domande`}
               </button>
             )
           )}

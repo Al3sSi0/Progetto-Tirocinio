@@ -3,7 +3,7 @@ import { C, font } from '../../styles/theme';
 // Filtro a chip cliccabili al posto di un menu a tendina. value '' = "tutti".
 export default function ChipSelect({ options, value, onChange, allLabel = 'Tutte', disabled }) {
   const chip = (active) => ({
-    padding: '5px 12px', borderRadius: 20, fontFamily: font, fontSize: 12.5, fontWeight: 500,
+    padding: '7px 14px', borderRadius: 20, fontFamily: font, fontSize: 13.5, fontWeight: 500,
     cursor: disabled ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
     background: active ? C.green : C.surface,
     color: active ? '#FFF' : C.textBody,

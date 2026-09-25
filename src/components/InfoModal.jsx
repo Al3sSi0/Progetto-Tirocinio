@@ -1,42 +1,40 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { C, font, serif } from '../styles/theme';
+import { useEscape } from '../lib/useEscape';
 
 const TABS = ['Domande', 'Documenti', 'Test'];
 
 const CONTENT = {
   Domande: {
-    intro: 'La schermata Domande è la tua banca domande personale. I dati sono organizzati su tre livelli: materia → argomento → domanda.',
+    intro: "La sezione Domande è il tuo archivio personale di domande a risposta multipla, divise per materia e argomento.",
     items: [
-      'Clicca su una materia o un argomento per espanderlo.',
-      'Clicca su una domanda per vedere testo completo, opzioni e risposta corretta.',
-      '+ Aggiungi per creare una nuova domanda — scegli tra inserimento manuale o generazione automatica da un documento caricato.',
-      'Il menu ⋯ su ogni domanda permette di modificarla, eliminarla o classificarla con la Tassonomia di Bloom.',
-      'La classificazione Bloom è automatica: tre modelli AI votano in parallelo e il livello vincitore viene salvato.',
-      'Usa la casella di ricerca per filtrare per materia, argomento, testo o livello Bloom.',
-      'Seleziona più domande con le checkbox per eliminarle in blocco.',
+      'Usa la colonna a sinistra per mostrare solo una materia o un argomento, e la casella di ricerca per trovare una domanda.',
+      '"Nuova domanda" ti fa scrivere una domanda a mano oppure generarne molte da un documento caricato, con l\'AI.',
+      'Le domande generate vengono controllate: quelle che sembrano già nel tuo archivio partono deselezionate.',
+      'Su ogni domanda trovi Modifica ed Elimina. "Classifica con l\'AI" assegna il livello di Bloom: tre modelli votano e vince la maggioranza.',
+      'Seleziona più domande per crearci subito un test, classificarle o eliminarle tutte insieme.',
     ],
   },
   Documenti: {
-    intro: 'Carica i tuoi materiali didattici. Il testo viene estratto automaticamente e usato per generare domande con l\'AI.',
+    intro: 'Qui carichi i tuoi materiali didattici: sono la base da cui l\'AI genera le domande.',
     items: [
-      'Trascina un file nell\'area di upload oppure clicca "sfoglia" — formati supportati: PDF, DOCX, TXT.',
-      'I PDF scansionati vengono elaborati con OCR automatico (può richiedere qualche secondo).',
-      'Il titolo viene pre-compilato dal nome del file; puoi modificarlo prima di salvare.',
-      'Clicca sul titolo di un documento per aprirlo direttamente.',
-      'Il menu ⋯ permette di eliminare il documento.',
-      'I documenti caricati diventano disponibili nella schermata Domande per la generazione AI.',
+      'Trascina i file in qualsiasi punto della pagina, oppure usa "Scegli dal computer". Puoi caricarne più di uno insieme.',
+      'Formati accettati: PDF, TXT, DOC e DOCX. Il testo viene letto solo da PDF e TXT (anche PDF scansionati, con qualche secondo in più): da un file Word non si possono generare domande.',
+      'Prima di caricare puoi correggere il nome di ogni file e indicare materia e argomento.',
+      '"Genera domande" su un documento ti porta alla generazione con quel documento già scelto.',
+      'Su ogni documento puoi aprire il file, modificare nome, materia e argomento, oppure eliminarlo.',
     ],
   },
   Test: {
-    intro: 'Componi test a partire dalle tue domande e scaricali nel formato che preferisci.',
+    intro: 'Componi test a partire dalle tue domande e scaricali pronti per la stampa o per Moodle.',
     items: [
-      '+ Nuovo test per creare un test: assegnagli un nome, materia e argomento.',
-      'Aggiungi domande in tre modi: manualmente una per una, generandole da un documento con l\'AI, oppure pescando dalla banca domande esistente.',
-      'Trascina le righe per riordinare le domande nel test.',
-      'Clicca su un test per vedere le domande che contiene.',
-      'Il menu ⋯ permette di modificare, esportare o eliminare il test.',
-      'Formati di esportazione disponibili: Word e PDF (senza risposta corretta, per gli studenti), Moodle XML e Aiken (con risposta corretta, per importare in Moodle).',
+      'Clicca su un test (o su Modifica) per aprirlo; "Anteprima" mostra le domande senza aprirlo.',
+      '"Nuovo test" apre la pagina di composizione: in alto dai nome, materia e argomento.',
+      'Dal pannello "Aggiungi domande" scegli le domande dall\'archivio (anche tutte insieme), generale con l\'AI da un documento oppure scrivine una nuova.',
+      'Trascina le domande per riordinarle; con la matita le modifichi, con il cestino le togli dal test (restano nell\'archivio).',
+      'Ricordati di premere "Salva test" nella barra in basso: se esci prima, il portale ti chiede conferma.',
+      'Esporta: Word e PDF senza risposte corrette (per gli studenti), Moodle XML e Aiken con le risposte (da importare in Moodle).',
     ],
   },
 };
@@ -44,6 +42,7 @@ const CONTENT = {
 export default function InfoModal({ onClose }) {
   const [activeTab, setActiveTab] = useState('Domande');
   const { intro, items } = CONTENT[activeTab];
+  useEscape(onClose);
 
   return (
     <div
@@ -56,14 +55,14 @@ export default function InfoModal({ onClose }) {
       >
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px 16px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-          <h2 style={{ margin: 0, fontFamily: serif, fontSize: 17, fontWeight: 500, color: C.text }}>Come funziona il portale</h2>
+          <h2 style={{ margin: 0, fontFamily: serif, fontSize: 20, fontWeight: 500, color: C.text }}>Come funziona il portale</h2>
           <button
             onClick={onClose}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', padding: 4, borderRadius: 6 }}
             onMouseEnter={e => e.currentTarget.style.color = C.text}
             onMouseLeave={e => e.currentTarget.style.color = C.textMuted}
-          >
-            <X size={16} />
+           aria-label="Chiudi">
+            <X size={18} />
           </button>
         </div>
 
@@ -74,14 +73,14 @@ export default function InfoModal({ onClose }) {
               key={tab}
               onClick={() => setActiveTab(tab)}
               style={{
-                padding: '5px 14px',
+                padding: '8px 16px',
                 background: activeTab === tab ? C.green : 'transparent',
                 color: activeTab === tab ? '#fff' : C.textMuted,
                 border: activeTab === tab ? 'none' : `1px solid ${C.border}`,
                 borderRadius: 6,
                 cursor: 'pointer',
                 fontFamily: font,
-                fontSize: 12,
+                fontSize: 13,
                 fontWeight: 500,
               }}
             >

@@ -52,6 +52,14 @@ export function colorForTag(name) {
   return palette[hash % palette.length];
 }
 
+// Colori del badge tipo file (pdf rosso, doc/docx blu, altri neutri).
+export function fileTypeStyle(ext) {
+  const e = (ext || '').toLowerCase();
+  if (e === 'pdf') return C.fileTypes.pdf;
+  if (e === 'doc' || e === 'docx') return C.fileTypes.doc;
+  return { bg: C.headerBg, color: C.textMuted };
+}
+
 export const font  = "'DM Sans', sans-serif";
 export const serif = 'Lora, serif';
 
@@ -68,3 +76,7 @@ export const BLOOM_HINTS = {
   evaluate:   'Giudicare e motivare una scelta.',
   create:     'Produrre qualcosa di nuovo e originale.',
 };
+
+// Stili condivisi dei campi dei form (modali di creazione/modifica)
+export const labelStyle = { display: 'block', fontSize: 13, fontWeight: 500, color: C.textMuted, marginBottom: 7 };
+export const inputStyle = { width: '100%', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 9, padding: '11px 14px', fontSize: 14.5, color: C.text, fontFamily: "'DM Sans', sans-serif", outline: 'none', boxSizing: 'border-box' };

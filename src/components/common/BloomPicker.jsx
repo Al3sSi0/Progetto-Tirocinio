@@ -14,7 +14,7 @@ export default function BloomPicker({ value, onChange, disabled }) {
           disabled={disabled}
           onClick={() => onChange('')}
           style={{
-            padding: '6px 12px', borderRadius: 20, fontFamily: font, fontSize: 12.5, fontWeight: 500,
+            padding: '6px 12px', borderRadius: 20, fontFamily: font, fontSize: 13.5, fontWeight: 500,
             cursor: disabled ? 'not-allowed' : 'pointer',
             background: !value ? C.headerBg : 'transparent',
             color: !value ? C.text : C.textFaint,
@@ -35,7 +35,7 @@ export default function BloomPicker({ value, onChange, disabled }) {
               onMouseEnter={() => setHover(l)}
               onMouseLeave={() => setHover(null)}
               style={{
-                padding: '6px 12px', borderRadius: 20, fontFamily: font, fontSize: 12.5, fontWeight: 500,
+                padding: '6px 12px', borderRadius: 20, fontFamily: font, fontSize: 13.5, fontWeight: 500,
                 cursor: disabled ? 'not-allowed' : 'pointer',
                 background: active ? s.color : s.background,
                 color: active ? '#FFF' : s.color,
@@ -48,7 +48,7 @@ export default function BloomPicker({ value, onChange, disabled }) {
           );
         })}
       </div>
-      <p style={{ fontSize: 12, color: C.textMuted, margin: '8px 0 0', minHeight: 18 }}>
+      <p style={{ fontSize: 13, color: C.textMuted, margin: '8px 0 0', minHeight: 18 }}>
         {shown ? `${BLOOM_LABELS[shown]}: ${BLOOM_HINTS[shown]}` : 'Facoltativo: indica che tipo di ragionamento richiede la domanda. Puoi anche lasciarlo vuoto e farlo classificare all\'AI.'}
       </p>
     </div>

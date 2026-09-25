@@ -1,29 +1,30 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, PenLine, BookOpen, X } from 'lucide-react';
+import { Sparkles, PenLine, BookOpen } from 'lucide-react';
 import { C, font, serif } from '../../styles/theme';
+import { useEscape } from '../../lib/useEscape';
 
 const CHOICES = [
+  {
+    id: 'review',
+    Icon: BookOpen,
+    title: 'Archivio Domande',
+    text: 'Crea, modifica o rivedi le tue domande.',
+    go: nav => nav('/'),
+  },
   {
     id: 'ai',
     Icon: Sparkles,
     title: 'Carica un documento',
-    text: "Carichi le dispense e l'AI ti aiuta a creare le domande del test.",
-    go: nav => nav('/documents', { state: { openUpload: true } }),
+    text: "Carichi le dispense e l'AI ti aiuterà a creare le domande del test.",
+    go: nav => nav('/documents'),
   },
   {
     id: 'manual',
     Icon: PenLine,
-    title: 'Crea un test a mano',
-    text: 'Componi il test scrivendo tu le domande, una alla volta.',
-    go: nav => nav('/tests', { state: { openCreate: true } }),
-  },
-  {
-    id: 'review',
-    Icon: BookOpen,
-    title: 'Rivedi le tue domande',
-    text: 'Guarda, modifica e organizza le domande che hai già.',
-    go: nav => nav('/'),
+    title: 'Crea un test',
+    text: 'Componi un test selezionando le domande che vuoi.',
+    go: nav => nav('/tests/new'),
   },
 ];
 
@@ -41,6 +42,8 @@ export default function WelcomeOverlay({ onClose }) {
     setTimeout(onClose, 220);
   }
 
+  useEscape(handleClose);
+
   function choose(c) {
     setVisible(false);
     setTimeout(() => c.go(navigate), 180);
@@ -52,15 +55,7 @@ export default function WelcomeOverlay({ onClose }) {
       style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(20,32,22,0.72)', backdropFilter: 'blur(5px)', WebkitBackdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: font, opacity: visible ? 1 : 0, transition: 'opacity 0.28s ease' }}
     >
       <div onClick={e => e.stopPropagation()} style={{ width: 'min(880px, 100%)', textAlign: 'center', position: 'relative', transform: visible ? 'translateY(0) scale(1)' : 'translateY(10px) scale(0.98)', transition: 'transform 0.28s ease' }}>
-        <button
-          onClick={handleClose}
-          title="Chiudi"
-          style={{ position: 'absolute', top: -8, right: -8, background: 'none', border: 'none', cursor: 'pointer', color: C.greenText, opacity: 0.8, padding: 8, display: 'flex' }}
-        >
-          <X size={22} />
-        </button>
-
-        <h1 style={{ fontFamily: serif, fontSize: 32, fontWeight: 500, color: '#FFF', margin: '0 0 8px' }}>Cosa vuoi fare oggi?</h1>
+        <h1 style={{ fontFamily: serif, fontSize: 32, fontWeight: 500, color: '#FFF', margin: '0 0 8px' }}>Benvenuto nel Portale Docenti</h1>
         <p style={{ fontSize: 15, color: C.greenText, margin: '0 0 32px', opacity: 0.9 }}>Scegli da dove partire. Potrai sempre cambiare sezione dalla barra in alto.</p>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 18 }}>

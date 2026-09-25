@@ -46,7 +46,7 @@ export default function Navbar() {
 
         <nav style={{ display: 'flex', gap: 8 }}>
           {TABS.map(({ path, label, Icon }) => {
-            const active = location.pathname === path;
+            const active = path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
             return (
               <button
                 key={path}

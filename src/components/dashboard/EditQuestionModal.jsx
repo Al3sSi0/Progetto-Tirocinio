@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import pb from '../../lib/pocketbase';
-import { C, font, serif, BLOOM_LEVELS, BLOOM_LABELS } from '../../styles/theme';
+import { C, font, serif, inputStyle, labelStyle, BLOOM_LEVELS, BLOOM_LABELS } from '../../styles/theme';
 import SuggestInput from './SuggestInput';
 import { useAllSuggestions } from '../../lib/useAllSuggestions';
 import Spinner from '../common/Spinner';
 import BloomPicker from '../common/BloomPicker';
 import ChipSelect from '../common/ChipSelect';
+import { useEscape } from '../../lib/useEscape';
 
 function parseOptions(raw) {
   if (Array.isArray(raw)) return raw.length ? raw : [''];
@@ -28,6 +29,7 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
   const initialCorrectIdx = initialOptions.findIndex(o => o === question.correct_answer);
   const [correctIdx, setCorrectIdx] = useState(initialCorrectIdx >= 0 ? initialCorrectIdx : null);
   const [saving, setSaving]       = useState(false);
+  useEscape(onClose, saving);
   const [formError, setFormError] = useState('');
   const [warning, setWarning]     = useState('');
 
@@ -87,8 +89,6 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
     }
   }
 
-  const inputStyle = { width: '100%', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', fontSize: 13, color: C.text, fontFamily: font, outline: 'none', boxSizing: 'border-box' };
-  const labelStyle = { display: 'block', fontSize: 12, fontWeight: 500, color: C.textMuted, marginBottom: 4 };
 
   return (
     <div
@@ -96,20 +96,20 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
       onClick={() => { if (!saving) onClose(); }}
     >
       <div
-        style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: `min(600px, 90vw)`, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.14)', fontFamily: font }}
+        style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: `min(720px, 92vw)`, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.14)', fontFamily: font }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: `1px solid ${C.borderLight}` }}>
-          <h2 style={{ fontFamily: serif, fontSize: 17, fontWeight: 500, color: C.text, margin: 0 }}>Modifica domanda</h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '22px 32px', borderBottom: `1px solid ${C.borderLight}` }}>
+          <h2 style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: C.text, margin: 0 }}>Modifica domanda</h2>
           <button onClick={onClose} disabled={saving}
-            style={{ background: 'none', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', color: C.textMuted, padding: 4, display: 'flex', opacity: saving ? 0.4 : 1 }}>
-            <X size={16} />
+            style={{ background: 'none', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', color: C.textMuted, padding: 4, display: 'flex', opacity: saving ? 0.4 : 1 }} aria-label="Chiudi">
+            <X size={18} />
           </button>
         </div>
 
         {/* Body */}
-        <div style={{ overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ overflowY: 'auto', padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
           <SuggestInput label="Materia" value={form.subject} onChange={v => setField('subject', v)} suggestions={subjectSuggestions} />
           <SuggestInput label="Argomento" value={form.topic} onChange={v => setField('topic', v)} suggestions={topicSuggestions} />
 
@@ -121,7 +121,7 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
 
           <div>
             <label style={labelStyle}>Opzioni di risposta * <span style={{ fontWeight: 400, color: C.textFaint }}>— seleziona il pallino per indicare quella corretta</span></label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {form.options.map((opt, idx) => (
                 <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input
@@ -131,18 +131,18 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
                     onChange={() => setCorrectIdx(idx)}
                     disabled={!opt.trim()}
                     title="Segna come risposta corretta"
-                    style={{ width: 15, height: 15, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
+                    style={{ width: 17, height: 17, accentColor: C.green, flexShrink: 0, cursor: opt.trim() ? 'pointer' : 'not-allowed' }}
                   />
                   <input value={opt} onChange={e => setOption(idx, e.target.value)} placeholder={`Opzione ${idx + 1}`} style={{ ...inputStyle, flex: 1 }} />
                   <button onClick={() => removeOption(idx)}
-                    style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, flexShrink: 0 }}
-                    title="Rimuovi opzione">
+                    style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, flexShrink: 0 }}
+                    title="Rimuovi opzione" aria-label="Rimuovi opzione">
                     <X size={13} />
                   </button>
                 </div>
               ))}
               <button onClick={addOption}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'none', border: `1px dashed ${C.border}`, borderRadius: 8, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 12, marginTop: 2 }}>
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', background: 'none', border: `1px dashed ${C.border}`, borderRadius: 9, cursor: 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, marginTop: 2 }}>
                 <Plus size={12} /> Aggiungi opzione
               </button>
             </div>
@@ -166,13 +166,13 @@ export default function EditQuestionModal({ question, onClose, onSaved, data }) 
         </div>
 
         {/* Footer */}
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '16px 24px', borderTop: `1px solid ${C.borderLight}` }}>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '20px 32px', borderTop: `1px solid ${C.borderLight}` }}>
           <button onClick={onClose} disabled={saving}
-            style={{ padding: '8px 18px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, opacity: saving ? 0.5 : 1 }}>
+            style={{ padding: '11px 22px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 14, opacity: saving ? 0.5 : 1 }}>
             Annulla
           </button>
           <button onClick={handleSubmit} disabled={saving}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: C.green, border: 'none', borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: saving ? 0.8 : 1 }}>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '11px 22px', background: C.green, border: 'none', borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 14, fontWeight: 500, opacity: saving ? 0.8 : 1 }}>
             {saving && <Spinner size={12} color="#FFF" trackColor="rgba(255,255,255,0.4)" />}
             {saving ? 'Salvataggio…' : 'Salva modifiche'}
           </button>

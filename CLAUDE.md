@@ -10,7 +10,7 @@
 | Icone    | lucide-react                        |
 | Stile    | Inline CSS (nessuna libreria UI)    |
 | AI       | OpenRouter API (`VITE_OPENROUTER_API_KEY`) |
-| PDF read | `pdfjs-dist` + `tesseract.js` (estrazione testo all'upload in `AddDocumentModal`) |
+| PDF read | `pdfjs-dist` + `tesseract.js` (estrazione testo all'upload in `UploadPanel`) |
 | PDF gen  | `jspdf` (generazione PDF export in `exportTest.js`)                               |
 
 ---
@@ -33,8 +33,9 @@ src/
       EditQuestionModal.jsx    # Modale modifica domanda
       SuggestInput.jsx         # Input testo con dropdown suggerimenti (riutilizzato anche in documents/)
     documents/
-      DocumentsPage.jsx        # Schermata documenti (struttura identica a Dashboard)
-      AddDocumentModal.jsx     # Modale upload documento con drag & drop
+      DocumentsPage.jsx        # Schermata documenti: colonna centrale, blocco upload + libreria
+      UploadPanel.jsx          # Blocco upload inline (multi-file, drag & drop, estrazione testo)
+      EditDocumentModal.jsx    # Modale modifica nome/materia/argomento
     tests/
       TestsPage.jsx            # Schermata test (struttura identica a Dashboard/DocumentsPage)
       TestModal.jsx            # Modale unica creazione/modifica test (inline add section, 3 tab, drag & drop riordino)
@@ -53,6 +54,7 @@ public/
 - `/` → `Dashboard` (protetta da `ProtectedRoute`)
 - `/documents` → `DocumentsPage` (protetta da `ProtectedRoute`)
 - `/tests` → `TestsPage` (protetta da `ProtectedRoute`)
+- `/tests/new`, `/tests/:id` → `TestEditorPage` (creazione/modifica test a pagina intera, protetta)
 - `*` → redirect a `/`
 
 ---
@@ -147,7 +149,7 @@ pb.collection('Test').delete(id)
 | `subject` | string | Materia                                                              |
 | `topic`   | string | Argomento                                                            |
 | `file`    | file   | File caricato (campo file singolo PocketBase)                        |
-| `text`    | string | Testo estratto dal file all'upload (via `extractText.js`)            |
+| `text`    | string | Testo estratto dal file all'upload (via `extractText.js`); **`max: 10000000`** — con `max: 0` PocketBase limita a 5000 caratteri e l'upload di un PDF fallisce con 400 |
 | `owner`   | string | ID utente autenticato (relation → users)                             |
 
 **Operazioni PocketBase usate:**
@@ -211,7 +213,7 @@ const [deleting, setDeleting]                   = useState(false);
 const [showAddModal, setShowAddModal]           = useState(false);
 const [openMenuId, setOpenMenuId]               = useState(null);      // id domanda con menu aperto
 const [editQuestion, setEditQuestion]           = useState(null);      // record domanda in modifica
-const [classifyingId, setClassifyingId]         = useState(null);      // id domanda in classificazione Bloom
+const [classifyingIds, setClassifyingIds]       = useState(new Set()); // domande in classificazione Bloom (anche di gruppo)
 ```
 
 ### Selezione e cancellazione
@@ -241,20 +243,26 @@ La funzione `classifyBloomCouncil(q, apiKey)` in `src/lib/classifyBloom.js` clas
 
 ### Modelli nel council
 
+Tutti i modelli AI sono configurati in **`src/lib/aiModels.js`** (unico punto da modificare, es. per passare a modelli a pagamento). Ogni posto del council è una lista `[principale, riserve…]` inviata a OpenRouter con il parametro `models`: se il principale non risponde (429/503, frequenti sui modelli `:free`) OpenRouter passa alla riserva successiva.
+
 ```js
-const COUNCIL_MODELS = [
-  "google/gemini-2.0-flash-001",
-  "meta-llama/llama-3.1-8b-instruct",
-  "nvidia/nemotron-3-super-120b-a12b:free",
+export const COUNCIL_MODELS = [
+  ['qwen/qwen3.8-27b:free',                  'z-ai/glm-5.2:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'],
+  ['google/gemma-4-31b-it:free',             'nvidia/nemotron-3-ultra-550b-a55b:free'],
+  ['nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'],
 ];
+// body: { ...modelFields(models), messages, temperature }  → { model, models }
 ```
+
+- Account OpenRouter attuale: piano gratuito, 50 richieste/giorno sui modelli `:free` (le richieste rifiutate non contano); una classificazione = 3 richieste
+- `modelVotes[].model` è il modello che ha risposto davvero (`response.model`), può essere una riserva
 
 ### Flusso di classificazione
 
 1. Carica il template del prompt da `/prompts/req_prompt.txt` (fetch a runtime)
 2. Sostituisce i placeholder `{example_en}`, `{answers_en}`, `{example_question_type}` con i dati della domanda
 3. Invia la richiesta a tutti e 3 i modelli in parallelo (`Promise.allSettled`) tramite OpenRouter API
-4. Parla la risposta di ciascun modello: cerca il primo `BLOOM_CATEGORIES` che appare nel testo (case-insensitive)
+4. Legge il voto di ciascun modello (`parseVote`): prima dalla riga `BLOOM_LEVEL : X`, altrimenti la categoria che compare per prima nel testo (case-insensitive); risposte HTTP non ok diventano errori con il messaggio di OpenRouter
 5. Calcola il vincitore per maggioranza dei voti validi
 6. Aggiorna il record PocketBase: `pb.collection('Question').update(q.id, { bloom_level: winner })`
 7. Restituisce `{ winner, modelVotes }` (ogni voto ha `model`, `vote`, `reply`)
@@ -265,11 +273,12 @@ L'API key OpenRouter viene passata da Dashboard come `import.meta.env.VITE_OPENR
 
 ### Stato durante la classificazione
 
-- `classifyingId` tiene traccia dell'id della domanda in corso di classificazione
-- Mentre `classifyingId === q.id`, la riga mostra `···` al posto del `BloomBadge`
-- Il pulsante "Classifica" nel menu è disabilitato (`opacity: 0.4`, `cursor: not-allowed`) finché una classificazione è in corso
-- Log in console: voti dei modelli (`console.table`) e vincitore (`console.log`)
-- In caso di errore: `alert("Classificazione fallita: " + err.message)`
+- `classifyMany(list)` in `Dashboard` classifica una o più domande: 2 alla volta (ognuna = 3 richieste AI), aggiorna `bloom_level` in `data` senza ricaricare la lista
+- `classifyingIds` (Set) = domande in corso: la card mostra `Classificazione…`; i pulsanti Classifica/Riclassifica sono disabilitati finché `classifyingIds.size > 0`
+- **Classificazione di gruppo:** pulsante **Classifica** nella barra di selezione + riga "N domande non classificate · Classificale tutte con l'AI" (sulle domande mostrate dai filtri); per più di una domanda `ConfirmModal` (`danger={false}`) con le richieste AI stimate
+- Durante il gruppo: `bulk = { done, total, failed }` → `ProgressBar` + pulsante **Interrompi** (`stopBulk` ref: le domande non ancora avviate vengono saltate)
+- Alla fine: le domande fallite restano selezionate + messaggio d'errore con il motivo; esito positivo in un banner verde (`notice`)
+- Log in console: voti dei modelli (`console.table`) e vincitore
 
 ### Prompt template (`public/prompts/req_prompt.txt`)
 
@@ -352,12 +361,30 @@ export const BLOOM_LABELS = {
 | `AddQuestionModal.jsx`| `data`, `onClose`, `onSaved`              | Modale creazione domanda; modalità **Manuale** (form standard) e **Genera da documento** (AI); tab switch nell'header |
 | `EditQuestionModal.jsx`| `question`, `data`, `onClose`, `onSaved` | Modale modifica domanda; pre-popola il form dal record, chiama `pb.collection('Question').update(id, ...)` |
 
+### Componenti condivisi delle pagine elenco (`src/components/common/`)
+
+Domande e Test hanno lo stesso layout: sidebar materie/argomenti a sinistra, toolbar (ricerca + pulsante primario), barra selezione, griglia di card.
+
+| File                 | Export                                              | Descrizione |
+|----------------------|-----------------------------------------------------|-------------|
+| `SubjectSidebar.jsx` | default `SubjectSidebar`, `PageStyles`, `SubjectTopic` | Sidebar filtri materia → argomento con conteggi; `<style>` del layout `.q-layout`; intestazione card con chip materia + argomento |
+| `ListToolbar.jsx`    | default `ListToolbar`, `SelectionBar`, `BulkDeleteBtn` | Ricerca + pulsante "Nuovo…"; barra "Seleziona tutti" con azioni bulk come children |
+| `SelectDot.jsx`      | default                                             | Selettore rotondo in alto a destra nelle card |
+| `ActionBtn.jsx`      | default                                             | Pulsante secondario nel footer card (`danger` per Elimina) |
+| `BloomTag.jsx`       | default                                             | 6 pallini + etichetta livello Bloom |
+
+- `subjectOf` / `topicOf` (chiavi normalizzate con `.trim()`) stanno in `src/lib/grouping.js`
+- Filtri pagina: `globalFilter`, `subjectFilter`, `topicFilter` (niente più stati `expandedSubjects`/`expandedTopics` nelle pagine elenco)
+- Card test: distribuzione Bloom (barra segmentata) + domande espandibili (`expandedTests`)
+
 ### Componenti separati (`src/components/tests/`)
 
 | File              | Props                              | Descrizione                                                                                   |
 |-------------------|------------------------------------|-----------------------------------------------------------------------------------------------|
 | `TestsPage.jsx`   | —                                  | Schermata test; struttura identica a Dashboard (3 livelli, bulk delete, no paginazione)       |
-| `TestModal.jsx`   | `test?`, `data`, `onClose`, `onSaved`, `initialQuestions?` | Modale unica creazione/modifica test; `isEdit = test !== null`; lista domande riordinabile via drag & drop + sezione inline "Aggiungi domanda" (3 tab) |
+| `TestEditorPage.jsx` | — (route `/tests/new`, `/tests/:id`; `location.state.preselectedQuestions` opzionale) | Pagina creazione/modifica test: a sinistra dettagli + domande riordinabili (drag & drop, modifica inline, "togli dal test"), a destra pannello sticky "Aggiungi domande" (Dall'archivio / Genera con AI / Scrivi nuova); barra di salvataggio fissa in basso; conferma uscita con modifiche non salvate; al salvataggio torna a `/tests` con `state.notice` |
+| `AddQuestionTabs.jsx` | export `MineTab`, `GenerateTab`, `ManualTab` | Schede del pannello "Aggiungi domande"; `MineTab` ha "Seleziona tutte" sulle domande filtrate |
+| `BloomDistribution.jsx` | `questions` | Barra segmentata + legenda dei livelli Bloom (lista test ed editor) |
 | `ExportTestModal.jsx` | `test`, `onClose` | Modale esportazione test; supporta Word, Moodle XML, PDF (senza risposta corretta), Aiken (con risposta corretta) |
 
 **Comportamento righe test (livello 3) in `TestsPage`:**
@@ -369,18 +396,17 @@ export const BLOOM_LABELS = {
 
 | File                   | Props                        | Descrizione                                                                              |
 |------------------------|------------------------------|------------------------------------------------------------------------------------------|
-| `DocumentsPage.jsx`    | —                            | Schermata documenti; struttura identica a Dashboard (3 livelli, paginazione, bulk delete) |
-| `AddDocumentModal.jsx` | `data`, `onClose`, `onSaved` | Modale upload file con drag & drop; usa `SuggestInput` da `dashboard/`                   |
+| `DocumentsPage.jsx`    | —                            | Colonna centrale (`maxWidth: 820`): intestazione centrata, `UploadPanel`, banner esito, libreria a righe |
+| `UploadPanel.jsx`      | `ref`, `data`, `onUploaded(created[])` | Upload inline: dropzone grande → coda file (nome modificabile, stato lettura testo) + materia/argomento comuni → "Carica N documenti"; `ref.current.addFiles(files)` per i drop fuori dal riquadro |
+| `EditDocumentModal.jsx`| `doc`, `data`, `onClose`, `onSaved` | Modifica nome, materia, argomento |
 
-**Componenti interni a `DocumentsPage.jsx`:**
-- `TypeBadge({ ext })` — badge colorato per tipo file: `pdf` rosso, `docx/doc` blu, `txt` grigio-beige, altri neutri
-- `thStyle` — identico a Dashboard (pattern da replicare in nuove schermate)
-
-**Comportamento righe documento (livello 3) in `DocumentsPage`:**
-- Le righe documento NON sono espandibili (nessun `DocDetail`, nessun chevron)
-- Il titolo è un `<a href={pb.files.getURL(doc, doc.file)} target="_blank">` che apre il file direttamente
-- Label visibile: `doc.title || doc.file || '—'`
-- Il filtro di ricerca include `title`, `subject`, `topic`, `file`
+**Comportamento `DocumentsPage`:**
+- Drop di file in **qualsiasi punto** della pagina (overlay "Rilascia per caricare"); il riquadro di `UploadPanel` chiama `preventDefault` e la pagina ignora i drop già gestiti (`e.defaultPrevented`)
+- Libreria: righe `DocumentRow` (icona tipo file con `fileTypeStyle(ext)` da `theme.js`, titolo-link al file, chip materia, argomento, data, stato testo "Testo letto"/"Nessun testo"), filtri `ChipSelect` per materia (se > 1) + ricerca su `title`, `subject`, `topic`, `file`
+- Azioni riga: **Genera domande** (disabilitato senza `doc.text`) → `navigate('/', { state: { generateFromDoc: doc.id } })`, Apri, Modifica, Elimina (conferma singola, niente bulk delete)
+- Libreria vuota → sotto il blocco upload non viene mostrato nulla
+- `Dashboard` legge `location.state.generateFromDoc` e apre `AddQuestionModal` con `initialMode="generate"` e `initialDocId`
+- Formati accettati: pdf, txt, doc, docx; il testo si estrae solo da pdf/txt (Word → avviso "non potrai generare domande")
 
 ---
 
@@ -461,7 +487,7 @@ if (warnMsg && warning !== warnMsg) { setWarning(warnMsg); setFormError(''); ret
 - `setField` deve resettare anche `warning` oltre a `formError`
 - Warning visualizzato con stile ambra: `background:'#FBF2DC', border:'1px solid #D4B84A', color:'#7A5010'`
 - Messaggio suggerisce: "Premi nuovamente 'Salva' per confermare."
-- Regole subject/topic applicate in `AddQuestionModal` e `AddDocumentModal`
+- Regole subject/topic applicate in `AddQuestionModal` e `UploadPanel`
 
 ### Auto-fill titolo da file selezionato
 Quando l'utente seleziona un file, pre-compilare il campo `title` se ancora vuoto:
@@ -473,7 +499,7 @@ function handleFile(file) {
 }
 ```
 - Non sovrascrive un titolo già inserito manualmente
-- Applicato in `AddDocumentModal`
+- Applicato in `UploadPanel` (titolo = nome file senza estensione, modificabile nella coda)
 
 ### Correct answer sincronizzata con options
 - Usare `useEffect` su `[form.options]` **solo in `AddQuestionModal`** (dove `correct_answer` parte vuoto):
@@ -492,9 +518,9 @@ function handleFile(file) {
 - Voci:
   - **Modifica** (`Pencil`) → `setEditQuestion(q); setOpenMenuId(null)`
   - **Elimina** (`Trash2`) → `setSelectedIds(new Set([q.id])); setShowDeleteModal(true); setOpenMenuId(null)`
-  - **Classifica** (`Tag`) → `handleClassify(q)` — avvia la classificazione Bloom asincrona
+  - **Classifica** (`Tag`) → `classifyMany([q])` — avvia la classificazione Bloom asincrona
 - "Elimina" da menu riusa il modale di conferma bulk esistente con selezione singola
-- "Classifica" disabilitato se `classifyingId !== null` (una classificazione già in corso)
+- "Classifica" disabilitato se `classifyingIds.size > 0` (una classificazione già in corso)
 
 ### `correct_answer` come stringa plain in `QuestionDetail`
 - Non usare `JsonItems` per `correct_answer`: è una stringa semplice, non un array
@@ -525,7 +551,7 @@ function handleFile(file) {
 
 ### Estrazione testo dai documenti (architettura)
 
-**Regola fondamentale:** l'estrazione avviene **una sola volta all'upload** in `AddDocumentModal`, viene salvata nel campo `doc.text` su PocketBase, e riletta da tutti i modali di generazione.
+**Regola fondamentale:** l'estrazione avviene **una sola volta all'upload** in `UploadPanel`, viene salvata nel campo `doc.text` su PocketBase, e riletta da tutti i modali di generazione.
 
 - `src/lib/extractText.js` espone `extractText(file, onProgress)`:
   - `.txt` → `file.text()`
@@ -536,16 +562,29 @@ function handleFile(file) {
   const docText = (doc.text || '').trim();
   ```
 - **Non importare** `pdfjs-dist` o `tesseract.js` nei modali di generazione — usare sempre `doc.text`
-- Troncare a 4000 caratteri prima di passare al prompt: `docText.slice(0, 4000)`
+- **Non troncare** il testo: la generazione usa tutto `doc.text`, diviso in blocchi (vedi sotto)
 
 ### Generazione domande AI da documento
-- Modello: `meta-llama/llama-3.1-8b-instruct` via OpenRouter
+
+Tutta la logica è in **`src/lib/generateQuestions.js`**, usata da `AddQuestionModal` e da `GenerateTab` in `TestModal`:
+```js
+const { questions, failed, requested, capped } =
+  await generateQuestionsFromText(docText, numQuestions, apiKey, (done, total) => setGenProgress({ done, total }));
+```
+- **Generazione a blocchi:** `planGeneration` calcola quante domande generare (max `MAX_GENERATED_QUESTIONS = 200`, e al massimo 1 ogni 400 caratteri di testo → documento breve = `capped: true`), sceglie la dimensione dei blocchi (2.500–12.000 caratteri) per avere ~6 domande per richiesta, e raggruppa blocchi contigui (max 4 per richiesta): tutto il documento è sempre coperto
+- `runGeneration(requests, apiKey, onProgress)` esegue le richieste (max 3 in parallelo, 1 nuovo tentativo su 429/5xx o risposta fuori formato) e restituisce `{ questions, failedRequests }`; una risposta senza domande riconoscibili conta come fallita
+- `generateQuestionsFromText` = `planGeneration` + `runGeneration`; `mergeQuestions` unisce risultati (ordine di documento tramite `_part`, duplicati identici rimossi)
+- **Riprova parti mancanti:** le modali salvano `failedRequests` e con `handleRetryFailed` rilanciano solo quelle; le nuove domande si aggiungono già selezionate
+- `saveGeneratedQuestions(pb, questions, onProgress)` salva a lotti da 20 (non centinaia di `create` simultanee)
+- UI condivisa in `components/common/GenerationUI.jsx`: `ProgressBar`, `GenerationNotice` (parti fallite + "Riprova", documento breve, meno domande del richiesto), `GeneratedListHeader` (conteggio + Seleziona/Deseleziona tutte, sticky)
+- `GenerationPlanHint` (`components/common/`) mostra sotto "Numero di domande" le pagine stimate e quante richieste all'AI verranno fatte
+- Modelli: `GENERATION_MODELS` da `src/lib/aiModels.js` (con riserve) via OpenRouter, body `...modelFields(GENERATION_MODELS)`
 - System message: `"Sei un esperto nella creazione di quiz educativi."`
 - Temperature: `0.5`
 - Prompt template (invariante):
   ```
   Crea un quiz di livello scuola superiore basato sul testo fornito.
-  Genera esattamente {N} domande in lingua ITALIANA.
+  Genera esattamente {N_blocco} domande in lingua ITALIANA.
   Rispetta rigorosamente questo formato per ogni domanda:
 
   > [Testo della domanda]
@@ -555,9 +594,9 @@ function handleFile(file) {
   d) [Opzione D]
   * Correct Answer: [Lettera, esempio: a)]
 
-  Testo: {testo_troncato_4000}
+  Testo: {testo_del_gruppo_di_blocchi}
   ```
-- Parsing risposta con `parseGeneratedQuestions(rawText)`:
+- Parsing risposta con `parseGeneratedQuestions(rawText)` (esportata da `src/lib/generateQuestions.js`, unica copia):
   - Split su `/\n(?=> )/` per separare i blocchi domanda
   - Testo domanda: `lines[0].replace(/^> /, '').trim()`
   - Opzioni: lette per **posizione** `lines[1..4]`, rimuovendo prefisso `a) `…`d) `
@@ -700,13 +739,12 @@ export default function XModal({ record = null, ...rest }) {
 - Titolo header: `isEdit ? 'Modifica X' : 'Nuovo X'`
 - Applicato in `TestModal` (unifica `AddTestModal` + `EditTestModal`)
 
-### File upload con drag & drop (AddDocumentModal)
-- Area drop: bordo `2px dashed C.border`; al drag-over → bordo `#5C7A5E`, sfondo `#EFF5E6`
-- Gestire `onDragOver` (preventDefault), `onDragLeave`, `onDrop` (legge `e.dataTransfer.files[0]`)
-- `<input type="file" hidden ref={fileInputRef}>` attivato da click sull'area o sul link "sfoglia"
-- Quando file selezionato: mostrare nome + icona + pulsante X per rimuovere
+### File upload con drag & drop (UploadPanel)
+- Area drop: bordo `2px dashed C.border`; al drag-over → bordo `C.focusBorder`, sfondo `#EFF5E6`
+- `<input type="file" multiple hidden>` attivato dal click sull'area o su "Scegli dal computer"
+- Estrazioni in coda una alla volta (`queueRef` promise chain) perché l'OCR è pesante
 - Upload obbligatoriamente via `FormData` (non oggetto plain): `formData.append('file', fileObject)`
-- Validazione: materia obbligatoria, file obbligatorio; errore inline con `C.error`
+- Validazione: argomento senza materia bloccante, materia/argomento vuoti → warning a due step; errore inline con `C.error`
 
 ---
 
@@ -739,3 +777,13 @@ ANSWER: A
 - `doc.splitTextToSize(text, maxWidth)` per wrapping manuale del testo
 - `checkPage(needed)` controlla spazio residuo e chiama `doc.addPage()` se necessario
 - Senza risposta corretta (come Word) — uso didattico/stampa per studenti
+
+---
+
+## Convenzioni UI
+
+- Stili dei campi dei form: `inputStyle` / `labelStyle` da `src/styles/theme.js` (non ridefinirli localmente)
+- Ogni modale/overlay chiama `useEscape(onClose, busy)` da `src/lib/useEscape.js` (Esc chiude solo quella in primo piano; ignorato durante operazioni in corso)
+- Pulsanti con sola icona: sempre `aria-label` (e `title` se utile)
+- Testo minimo 11px (etichette maiuscole), corpo 13.5–15px
+- Domande generate dall'AI: prima del salvataggio `detectDuplicates` (`src/lib/duplicates.js`) le confronta con test e archivio (testo normalizzato identico o ≥ 75% di parole significative in comune); i doppioni partono deselezionati e mostrano `DuplicateBadge` (nell'editor test: "Usa quella dell'archivio")

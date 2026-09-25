@@ -15,6 +15,7 @@ dist-ssr
 
 # PocketBase runtime (binario e dati locali, non versionati)
 pocketbase/pocketbase.exe
+pocketbase/pocketbase
 pocketbase/pb_data/
 pocketbase/CHANGELOG.md
 pocketbase/LICENSE.md

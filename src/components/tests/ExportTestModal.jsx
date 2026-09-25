@@ -3,6 +3,7 @@ import { X, FileText, FileCode, File, AlignLeft, Download } from 'lucide-react';
 import { C, font, serif } from '../../styles/theme';
 import { exportMoodleXml, exportWord, exportPdf, exportAiken } from '../../lib/exportTest';
 import Spinner from '../common/Spinner';
+import { useEscape } from '../../lib/useEscape';
 
 const FORMATS = [
   {
@@ -46,6 +47,7 @@ const FORMATS = [
 export default function ExportTestModal({ test, onClose }) {
   const [exporting, setExporting] = useState(null);
   const [error, setError] = useState('');
+  useEscape(onClose, !!exporting);
 
   const questions = test.expand?.questions
     ? (Array.isArray(test.expand.questions) ? test.expand.questions : [test.expand.questions])
@@ -91,7 +93,7 @@ export default function ExportTestModal({ test, onClose }) {
               onClick={onClose}
               disabled={!!exporting}
               style={{ background: 'none', border: 'none', cursor: exporting ? 'not-allowed' : 'pointer', color: C.textFaint, padding: 4, borderRadius: 4, display: 'flex', flexShrink: 0, marginLeft: 12, opacity: exporting ? 0.4 : 1 }}
-            >
+             aria-label="Chiudi">
               <X size={18} />
             </button>
           </div>
@@ -148,7 +150,7 @@ export default function ExportTestModal({ test, onClose }) {
                       }
                     </div>
                     {!format.available && (
-                      <span style={{ fontSize: 10, color: C.textFaint, background: C.headerBg, border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: '2px 7px' }}>
+                      <span style={{ fontSize: 11.5, color: C.textFaint, background: C.headerBg, border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: '2px 7px' }}>
                         Presto
                       </span>
                     )}
@@ -158,14 +160,14 @@ export default function ExportTestModal({ test, onClose }) {
                   </div>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 }}>{format.label}</div>
-                    <div style={{ fontSize: 11.5, color: C.textMuted, lineHeight: 1.4 }}>{format.description}</div>
+                    <div style={{ fontSize: 13, color: C.textMuted, lineHeight: 1.4 }}>{format.description}</div>
                   </div>
                 </button>
               );
             })}
           </div>
 
-          <p style={{ fontSize: 11.5, color: C.textFaint, margin: '18px 0 0', textAlign: 'center' }}>
+          <p style={{ fontSize: 13, color: C.textFaint, margin: '18px 0 0', textAlign: 'center' }}>
             {questions.length} {questions.length === 1 ? 'domanda' : 'domande'} nel test
           </p>
         </div>

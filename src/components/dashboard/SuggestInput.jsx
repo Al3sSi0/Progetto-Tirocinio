@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { C, font } from '../../styles/theme';
+import { C, inputStyle, labelStyle } from '../../styles/theme';
 
 export default function SuggestInput({ label, value, onChange, suggestions, error }) {
   const [open, setOpen] = useState(false);
@@ -22,9 +22,9 @@ export default function SuggestInput({ label, value, onChange, suggestions, erro
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: C.textMuted, marginBottom: 4 }}>{label}</label>
+      <label style={labelStyle}>{label}</label>
       {error && (
-        <div style={{ fontSize: 12, color: C.error.text, background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 6, padding: '5px 10px', marginBottom: 6, animation: 'errorSlideIn 0.25s ease' }}>
+        <div style={{ fontSize: 13, color: C.error.text, background: C.error.bg, border: `1px solid ${C.error.border}`, borderRadius: 6, padding: '5px 10px', marginBottom: 6, animation: 'errorSlideIn 0.25s ease' }}>
           {error}
         </div>
       )}
@@ -33,7 +33,7 @@ export default function SuggestInput({ label, value, onChange, suggestions, erro
         onChange={e => { onChange(e.target.value); setOpen(true); }}
         onFocus={() => { setOpen(true); setFocused(true); }}
         onBlur={() => setFocused(false)}
-        style={{ width: '100%', background: C.surface, border: `1px solid ${error ? C.error.border : focused ? C.focusBorder : C.border}`, borderRadius: 8, padding: '8px 12px', fontSize: 13, color: C.text, fontFamily: font, outline: 'none', boxSizing: 'border-box' }}
+        style={{ ...inputStyle, border: `1px solid ${error ? C.error.border : focused ? C.focusBorder : C.border}` }}
         onMouseEnter={e => { if (!focused) e.target.style.borderColor = error ? C.error.border : C.focusBorder; }}
         onMouseLeave={e => { if (!focused) e.target.style.borderColor = error ? C.error.border : C.border; }}
       />
@@ -43,7 +43,7 @@ export default function SuggestInput({ label, value, onChange, suggestions, erro
             <li
               key={s}
               onMouseDown={e => { e.preventDefault(); onChange(s); setOpen(false); }}
-              style={{ padding: '8px 12px', fontSize: 13, color: C.textBody, cursor: 'pointer' }}
+              style={{ padding: '10px 14px', fontSize: 14, color: C.textBody, cursor: 'pointer' }}
               onMouseEnter={e => e.currentTarget.style.background = C.expandBg}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
             >

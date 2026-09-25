@@ -63,7 +63,7 @@ const S = {
     marginBottom: 16,
   },
   label: {
-    fontSize: 11,
+    fontSize: 12.5,
     fontWeight: 500,
     color: '#7A7060',
     letterSpacing: '0.06em',
@@ -118,7 +118,7 @@ const S = {
     margin: '24px 0',
   },
   note: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#9A9080',
     textAlign: 'center',
     margin: 0,

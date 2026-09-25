@@ -1,5 +1,6 @@
 import { C, font, serif } from '../../styles/theme';
 import Spinner from './Spinner';
+import { useEscape } from '../../lib/useEscape';
 
 // Modale di conferma generico (elimina/rimuovi), basato sul pattern già usato in Dashboard.
 export default function ConfirmModal({
@@ -13,6 +14,7 @@ export default function ConfirmModal({
   loading = false,
   danger = true,
 }) {
+  useEscape(onCancel, loading);
   const accent = danger ? C.error : { bg: C.expandBg, border: C.border, text: C.greenLight };
   return (
     <div
@@ -38,14 +40,14 @@ export default function ConfirmModal({
           <button
             onClick={onCancel}
             disabled={loading}
-            style={{ padding: '8px 18px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 13, opacity: loading ? 0.5 : 1 }}
+            style={{ padding: '11px 22px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 14, opacity: loading ? 0.5 : 1 }}
           >
             {cancelLabel}
           </button>
           <button
             onClick={onConfirm}
             disabled={loading}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', background: danger ? C.error.text : C.green, border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 13, fontWeight: 500, opacity: loading ? 0.8 : 1 }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '11px 22px', background: danger ? C.error.text : C.green, border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 14, fontWeight: 500, opacity: loading ? 0.8 : 1 }}
           >
             {loading && <Spinner size={12} color="#FFF" trackColor="rgba(255,255,255,0.4)" />}
             {loading ? 'Attendere…' : confirmLabel}

@@ -1,0 +1,128 @@
+import { useState } from 'react';
+import { X } from 'lucide-react';
+import pb from '../../lib/pocketbase';
+import { C, font, serif, inputStyle, labelStyle, BLOOM_LEVELS, BLOOM_LABELS } from '../../styles/theme';
+import SuggestInput from './SuggestInput';
+import { useAllSuggestions } from '../../lib/useAllSuggestions';
+import Spinner from '../common/Spinner';
+import BloomPicker from '../common/BloomPicker';
+import ChipSelect from '../common/ChipSelect';
+import { useEscape } from '../../lib/useEscape';
+import { answerFromQuestion, answerToFields } from '../../lib/questionTypes';
+import AnswerEditor from '../common/AnswerEditor';
+
+export default function EditQuestionModal({ question, onClose, onSaved, data }) {
+  const [form, setForm] = useState({
+    subject:        question.subject || '',
+    topic:          question.topic || '',
+    content:        question.content || '',
+    bloom_level:    question.bloom_level || '',
+  });
+  const [answer, setAnswer] = useState(() => answerFromQuestion(question));
+  const [saving, setSaving]       = useState(false);
+  useEscape(onClose, saving);
+  const [formError, setFormError] = useState('');
+  const [warning, setWarning]     = useState('');
+
+  const { subjects: subjectSuggestions, topics: topicSuggestions } = useAllSuggestions(form.subject, data);
+
+  function setField(key, val) { setForm(f => ({ ...f, [key]: val })); setFormError(''); setWarning(''); }
+  async function handleSubmit() {
+    const subject = form.subject.trim();
+    const topic   = form.topic.trim();
+    const content = form.content.trim();
+    const fields  = answerToFields(answer);
+
+    if (!content) { setFormError('Il testo della domanda è obbligatorio.'); setWarning(''); return; }
+    if (fields.error) { setFormError(fields.error); setWarning(''); return; }
+    if (!subject && topic) { setFormError('Inserisci la materia prima di specificare un argomento.'); setWarning(''); return; }
+
+    const warnMsg = !subject && !topic
+      ? 'Sicuro di voler salvare la domanda senza materia e senza argomento?'
+      : subject && !topic
+        ? 'Sicuro di voler salvare la domanda senza argomento?'
+        : '';
+    if (warnMsg && warning !== warnMsg) { setWarning(warnMsg); setFormError(''); return; }
+
+    setSaving(true); setFormError(''); setWarning('');
+    try {
+      await pb.collection('Question').update(question.id, {
+        subject,
+        topic,
+        content,
+        options:        fields.options,
+        correct_answer: fields.correct_answer,
+        bloom_level:    form.bloom_level,
+      });
+      onSaved();
+    } catch {
+      setFormError('Errore durante il salvataggio. Riprova.');
+      setSaving(false);
+    }
+  }
+
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+      onClick={() => { if (!saving) onClose(); }}
+    >
+      <div
+        style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, width: `min(720px, 92vw)`, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.14)', fontFamily: font }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '22px 32px', borderBottom: `1px solid ${C.borderLight}` }}>
+          <h2 style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: C.text, margin: 0 }}>Modifica domanda</h2>
+          <button onClick={onClose} disabled={saving}
+            style={{ background: 'none', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', color: C.textMuted, padding: 4, display: 'flex', opacity: saving ? 0.4 : 1 }} aria-label="Chiudi">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ overflowY: 'auto', padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
+          <SuggestInput label="Materia" value={form.subject} onChange={v => setField('subject', v)} suggestions={subjectSuggestions} />
+          <SuggestInput label="Argomento" value={form.topic} onChange={v => setField('topic', v)} suggestions={topicSuggestions} />
+
+          <div>
+            <label style={labelStyle}>Testo della domanda *</label>
+            <textarea value={form.content} onChange={e => setField('content', e.target.value)} rows={4}
+              style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }} />
+          </div>
+
+          <AnswerEditor value={answer} onChange={a => { setAnswer(a); setFormError(''); }} name="edit-question-correct-answer" />
+
+          <div>
+            <label style={labelStyle}>Livello Bloom</label>
+            <BloomPicker value={form.bloom_level} onChange={v => setField('bloom_level', v)} />
+          </div>
+
+          {warning && (
+            <div style={{ background: C.warning.bg, border: `1px solid ${C.warning.border}`, color: C.warning.text, fontSize: 13, borderRadius: 8, padding: '10px 14px' }}>
+              {warning} Premi nuovamente "Salva modifiche" per confermare.
+            </div>
+          )}
+          {formError && (
+            <div style={{ background: C.error.bg, border: `1px solid ${C.error.border}`, color: C.error.text, fontSize: 13, borderRadius: 8, padding: '10px 14px' }}>
+              {formError}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '20px 32px', borderTop: `1px solid ${C.borderLight}` }}>
+          <button onClick={onClose} disabled={saving}
+            style={{ padding: '11px 22px', background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: C.textMuted, fontFamily: font, fontSize: 14, opacity: saving ? 0.5 : 1 }}>
+            Annulla
+          </button>
+          <button onClick={handleSubmit} disabled={saving}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '11px 22px', background: C.green, border: 'none', borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer', color: '#FFF', fontFamily: font, fontSize: 14, fontWeight: 500, opacity: saving ? 0.8 : 1 }}>
+            {saving && <Spinner size={12} color="#FFF" trackColor="rgba(255,255,255,0.4)" />}
+            {saving ? 'Salvataggio…' : 'Salva modifiche'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
